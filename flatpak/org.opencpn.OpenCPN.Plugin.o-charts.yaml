@@ -1,0 +1,103 @@
+#
+# Branches and runtime-version:
+#   - master     Nigthly builds, 22.08 runtime
+#   - beta       Flathub beta branch with 22.08 runtime.
+#   - stable     Flathub main branch x86_64 with 20.08 runtime.
+#
+# This is a template used to create a complete manifest in the build
+# directory. Doing so, it handles three tokens:
+# @plugin_name
+#    is replaced with PKG_NAME from Plugin.cmake
+# @app_id
+#    is  replaced with the last part of the initial id: line
+#    after substituting possible @plugin_name.
+# @include  <file>
+#    Replaces the line with @include with the contents of <file>,
+#
+# See cmake/ConfigureManifest.cmake for details.
+#
+id: org.opencpn.OpenCPN.Plugin.@plugin_name
+
+runtime: org.opencpn.OpenCPN
+# FIXME(alec) Revert to stable when updated to 24.08
+runtime-version: beta
+sdk: org.freedesktop.Sdk//24.08
+build-extension: true
+separate-locales: false
+appstream-compose: false
+finish-args:
+    - --socket=x11
+    - --socket=pulseaudio
+    - --filesystem=home
+    - --device=all
+
+modules:
+    - @include opencpn-libs/flatpak/glu.yaml
+
+    - @include opencpn-libs/flatpak/libusb.yaml
+
+    - name: glew
+      no-autogen: true
+      make-args:
+        - GLEW_PREFIX=/app/extensions/o-charts_pi
+        - GLEW_DEST=/app/extensions/o-charts_pi
+        - LIBDIR=/app/extensions/o-charts_pi/lib
+      make-install-args:
+        - GLEW_PREFIX=/app/extensions/o-charts_pi
+        - GLEW_DEST=/app/extensions/o-charts_pi
+        - LIBDIR=/app/extensions/o-charts_pi/lib
+      sources:
+        - type: archive
+          url: https://downloads.sourceforge.net/project/glew/glew/2.1.0/glew-2.1.0.tgz
+          sha256: 04de91e7e6763039bc11940095cd9c7f880baba82196a7765f727ac05a993c95
+      cleanup:
+        - /include"
+        - /lib/pkgconfig"
+        - /lib/*.a"
+
+    - name: libusb-compat-0.1
+      config-opts:
+        - --disable-static
+        - --prefix=/app/extensions/o-charts_pi
+      build-options:
+        env:
+          PKG_CONFIG_PATH: /app/extensions/o-charts_pi/lib/pkgconfig
+      sources:
+        - type: git
+          url: https://github.com/libusb/libusb-compat-0.1.git
+          tag: v0.1.7
+      cleanup:
+        - /lib/*.la
+        - /lib/pkgconfig
+        - /include
+
+    - name: iproute2
+      sources:
+        - type: archive
+          url: https://mirrors.edge.kernel.org/pub/linux/utils/net/iproute2/iproute2-6.9.0.tar.xz
+          sha256: 2f643d09ea11a4a2a043c92e2b469b5f73228cbf241ae806760296ed0ec413d0
+      no-autogen: true
+      buildsystem: autotools
+      make-args:
+        - PREFIX=/app
+      make-install-args:
+        - DESTDIR=/app/extensions/o-charts_pi
+        - SBINDIR=/bin
+
+    - name: @app_id
+      no-autogen: true
+      buildsystem: cmake
+      config-opts:
+          - -DCMAKE_INSTALL_PREFIX=/app/extensions/@app_id
+          - -DCMAKE_BUILD_TYPE:STRING=Release
+          - -DCMAKE_VERBOSE_MAKEFILE:BOOL=ON
+          - -DBUILD_TYPE:STRING=tarball
+          - -Uplugin_target
+      build-options:
+          cxxflags: -DFLATPAK -O3
+          cflags: -DFLATPAK -O3
+          # The flatpak-builder default CFLAGS adds -g
+      sources:
+          - type: git
+            url: ..
+            branch: HEAD

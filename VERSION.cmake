@@ -1,0 +1,1 @@
+SET(OCPN_VERSION "2.0.35.0")

@@ -79,7 +79,7 @@ endforeach ()
 #
 set(BUILD_UTILS OFF CACHE BOOL "")
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "")
-add_subdirectory(${src_dir}/build/cmake glew_dir)
+add_subdirectory(${src_dir}/build/cmake glew_dir EXCLUDE_FROM_ALL)
 
 target_link_libraries(_GLEW_IF INTERFACE glew_s)
 target_include_directories(_GLEW_IF INTERFACE "${src_dir}/include")

@@ -35,6 +35,17 @@ project(${PKG_NAME} VERSION ${PKG_VERSION})
 include(PluginCompiler)
 
 add_library(${CMAKE_PROJECT_NAME} SHARED EXCLUDE_FROM_ALL ${SRC})
+
+if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC" AND DEPLOY_ON_BUILD)
+    add_custom_command(
+        TARGET ${CMAKE_PROJECT_NAME}
+        POST_BUILD
+        COMMAND copy "$(TargetPath)" "$(LOCALAPPDATA)\\opencpn\\plugins\\$(TargetFileName)"
+        COMMENT "Deploy to import location"
+        VERBATIM
+    )
+endif()
+
 include_directories(BEFORE ${CMAKE_BINARY_DIR}/include)
 
 add_subdirectory("opencpn-libs/${PKG_API_LIB}")

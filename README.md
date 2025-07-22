@@ -1,3 +1,22 @@
+Build Instructions for Windows:
+
+git clone --recurse-submodules https://github.com/deeprey-marine/deeprey-ocharts.git
+
+cd deeprey-ocharts
+
+Run buildwin\win_deps.bat wx32
+
+mkdir build
+
+cd build
+
+Configure the build environment ( use your own path instead of C:/Projects/): cmake -A Win32 -G "Visual Studio 17 2022" -DCMAKE_GENERATOR_PLATFORM=Win32 -DwxWidgets_LIB_DIR=C:/Projects/deeprey-ocharts/cache/wxWidgets/lib/vc14x_dll -DwxWidgets_ROOT_DIR=C:/Projects/deeprey-ocharts/cache/wxWidgets ..
+
+On windows, add -DDEPLOY_ON_BUILD=1 if you want plugin dll auto-copy into import location.
+
+Build the plugin: cmake --build . --config Release --target tarball
+
+
 o-charts_pi README
 ==================
 

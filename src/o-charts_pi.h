@@ -94,6 +94,7 @@ class   o_charts_pi_event_handler;
 class   oesencPanel;
 class   shopPanel;
 class   OESENC_HTMLMessageDialog;
+class   DpOchartsAPI;
 
 
 class ChartInfoItem {
@@ -160,6 +161,7 @@ public:
     bool SaveConfig( void );
 
     wxString GetCertificateDir();
+    void UpdateApiPtr();
 
     wxStaticText        *m_up_text;
     wxStaticText        *m_ip_text;
@@ -209,6 +211,7 @@ private:
 
     oesencPanel         *m_oesencpanel;
     wxBitmap            m_panelBitmap;
+    DpOchartsAPI        *m_ochartsAPI;
 };
 
 

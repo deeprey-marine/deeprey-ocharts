@@ -29,7 +29,7 @@ set(OCPN_TARGET_TUPLE "" CACHE STRING
 # -------  Plugin setup --------
 #
 include("VERSION.cmake")
-set(PKG_NAME o-charts_pi)
+set(PKG_NAME deeprey-ocharts_pi)
 set(PKG_VERSION ${OCPN_VERSION})
 project(${PKG_NAME} VERSION ${PKG_VERSION})
 
@@ -43,11 +43,11 @@ endif ()
 
 set(PKG_PRERELEASE "")  # Empty, or a tag like 'beta'
 
-set(DISPLAY_NAME o-charts)    # Dialogs, installer artifacts, ...
-set(PLUGIN_API_NAME o-charts) # As of GetCommonName() in plugin API
+set(DISPLAY_NAME deeprey-ocharts)    # Dialogs, installer artifacts, ...
+set(PLUGIN_API_NAME deeprey-ocharts) # As of GetCommonName() in plugin API
 set(CPACK_PACKAGE_CONTACT "Dave Register")
 set(PKG_SUMMARY
-  "Encrypted Vector Charts from o-charts.org"
+  "Encrypted Vector Charts from o-charts.org for deeprey-gui."
 )
 set(PKG_DESCRIPTION [=[
 OpenCPN  Vector Charts licensed and sourced from chart providers like
@@ -59,7 +59,7 @@ EULA. The charts has world-wide coverage and provides a cost-effective
 way to access the national chart databases. Charts are encrypted and
 can only be used after purchasing decryption keys from o-charts.org.
 
-o-charts can handle all charts previously handled by the oesenc and
+deeprey-ocharts can handle all charts previously handled by the oesenc and
 oernc plugins. It thus obsoletes these two plugins.
 ]=])
 
@@ -114,6 +114,10 @@ set(SRC
   src/validator.cpp
   src/viewport.cpp
   libs/gdal/src/s57classregistrar.cpp
+  src/interface/DpOchartsTypes.h
+  src/interface/IDpOchartsAPI.h
+  src/DpOchartsAPI.cpp
+  src/DpOchartsAPI.h
 )
 
 if(QT_ANDROID)

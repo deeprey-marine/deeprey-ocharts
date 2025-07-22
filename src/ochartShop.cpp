@@ -2285,18 +2285,21 @@ void saveShopConfig()
    pConf->Flush();
 }
 
+wxString g_dpMessage;
+
 int checkResult(wxString &result, bool bShowLoginErrorDialog = true)
 {
-    if(g_shopPanel){
-        g_ipGauge->Stop();
-    }
+    bShowLoginErrorDialog = true;
+    //if(g_shopPanel){
+    //    g_ipGauge->Stop();
+    //}
 
     wxString resultDigits = result.BeforeFirst(':');
 
     bool bSkipErrorDialog = false;
     long dresult;
     if(resultDigits.ToLong(&dresult)){
-        if(dresult == 1){
+        if(dresult == 1){           
             return 0;
         }
         else{
@@ -2337,7 +2340,8 @@ int checkResult(wxString &result, bool bShowLoginErrorDialog = true)
                         break;
 
                 }
-                OCPNMessageBox_PlugIn(NULL, msg, _("o-charts_pi Message"), wxOK);
+                g_dpMessage += " " + msg;
+                //OCPNMessageBox_PlugIn(NULL, msg, _("o-charts_pi Message"), wxOK);
 
            }
 
@@ -2357,8 +2361,11 @@ int checkResult(wxString &result, bool bShowLoginErrorDialog = true)
                         break;
                 }
 
-                if(!bSkipErrorDialog)
-                    OCPNMessageBox_PlugIn(NULL, msg, _("o-charts_pi Message"), wxOK);
+                if (!bSkipErrorDialog)
+                {
+                    g_dpMessage += " " + msg;
+                    //OCPNMessageBox_PlugIn(NULL, msg, _("o-charts_pi Message"), wxOK);
+                }
             }
             return dresult;
         }
@@ -2383,7 +2390,8 @@ int checkResult(wxString &result, bool bShowLoginErrorDialog = true)
         else
             msg = result;
 
-        OCPNMessageBox_PlugIn(NULL, _("o-Charts shop interface error") + _T("\n") + result + _T("\n") + msg, _("o-charts_pi Message"), wxOK);
+        g_dpMessage += " " + _("o-Charts shop interface error") + _T(" ") + result + _T(" ") + msg;
+       // OCPNMessageBox_PlugIn(NULL, _("o-Charts shop interface error") + _T("\n") + result + _T("\n") + msg, _("o-charts_pi Message"), wxOK);
     }
 
     return 98;
@@ -2401,8 +2409,9 @@ int checkResponseCode(int iResponseCode, wxString extendedMessage = "")
             msg += "\n";
         }
         msg += _("Check your connection and try again.");
-        ShowOERNCMessageDialog(NULL, msg, _("o-charts_pi Message"), wxOK);
-        g_shopPanel->ClearChartOverrideStatus();
+        g_dpMessage += " " + msg;
+        //ShowOERNCMessageDialog(NULL, msg, _("o-charts_pi Message"), wxOK);
+        //g_shopPanel->ClearChartOverrideStatus();
     }
 
     // The wxCURL library returns "0" as response code,
@@ -2416,22 +2425,22 @@ int checkResponseCode(int iResponseCode, wxString extendedMessage = "")
 
 }
 
-int doLogin( wxWindow *parent )
+int doLogin( /*wxWindow *parent*/ wxString dpLogin, wxString dpPass )
 {
   wxString pass;
 
-  do {
-    oeUniLogin login(parent);
+ // do {
+   /* oeUniLogin login(parent);
     login.SetLoginName(g_loginUser);
     login.ShowModal();
 
     if(!(login.GetReturnCode() == 0)){
         wxYield();
         return 55;
-    }
+    }*/
 
-    g_loginUser = login.m_UserNameCtl->GetValue().Trim( true).Trim( false );
-    pass = login.m_PasswordCtl->GetValue().Trim( true).Trim( false );
+    g_loginUser = /*login.m_UserNameCtl->GetValue()*/dpLogin.Trim( true).Trim( false );
+    pass = /*login.m_PasswordCtl->GetValue()*/dpPass.Trim( true).Trim( false );
 
     if( (pass.Length() < 5) || (pass.length() > 255)){
       wxString msg(_("Invalid password length"));
@@ -2442,11 +2451,13 @@ int doLogin( wxWindow *parent )
       msg += "\n";
       msg += wxString(_("Less than 255 characters."));
 
-      ShowOERNCMessageDialog(NULL, msg, _("o-charts_pi Message"), wxOK);
+      g_dpMessage += " " + msg;
+      //ShowOERNCMessageDialog(NULL, msg, _("o-charts_pi Message"), wxOK);
+      return 0;
 
     }
 
-  } while ((pass.Length() < 5) || (pass.length() > 255));
+//  } while ((pass.Length() < 5) || (pass.length() > 255));
 
   wxString taskID;
 #ifdef __ANDROID__
@@ -3772,7 +3783,7 @@ int doShop(){
 
     //  Do we need an initial login to get the persistent key?
     if(g_loginKey.Len() == 0){
-        doLogin( g_shopPanel );
+        //doLogin( g_shopPanel );
         saveShopConfig();
     }
 
@@ -4826,7 +4837,7 @@ void shopPanel::OnButtonUpdate( wxCommandEvent& event )
 
     //  Do we need an initial login to get the persistent key?
     if(g_loginKey.Len() == 0){
-        if(doLogin( g_shopPanel ) != 1)
+        if(true)//doLogin( g_shopPanel ) != 1)
             return;
         saveShopConfig();
     }
@@ -4858,7 +4869,7 @@ void shopPanel::OnButtonUpdate( wxCommandEvent& event )
         setStatusText( _("Status: Login error."));
         g_ipGauge->Stop();
         wxYield();
-        if(doLogin(g_shopPanel) != 1)      // if the second login attempt fails, return to GUI
+        if(true)//doLogin(g_shopPanel) != 1)      // if the second login attempt fails, return to GUI
             return;
         saveShopConfig();
 

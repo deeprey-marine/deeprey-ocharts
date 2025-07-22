@@ -68,6 +68,7 @@
 #include "ochartShop.h"
 
 #include "dychart.h"
+#include "DpOchartsAPI.h"
 
 #ifdef __WXOSX__
 // #include "OpenGL/gl.h"
@@ -479,7 +480,8 @@ void OESENC_HTMLMessageDialog::OnTimer(wxTimerEvent &evt)
 //---------------------------------------------------------------------------------------------------------
 
 o_charts_pi::o_charts_pi(void *ppimgr)
-      :opencpn_plugin_117(ppimgr)
+      :opencpn_plugin_117(ppimgr),
+    m_ochartsAPI(nullptr)
 {
       wxString vs;
       vs.Printf(_T("%d.%d.%d"), PLUGIN_VERSION_MAJOR, PLUGIN_VERSION_MINOR, PLUGIN_VERSION_PATCH);
@@ -762,6 +764,7 @@ int o_charts_pi::Init(void)
 #endif
     // Android handled in Java-side interface
 
+    m_ochartsAPI = new DpOchartsAPI();
 
     return flags;
 
@@ -783,6 +786,13 @@ bool o_charts_pi::DeInit(void)
     m_class_name_array.Clear();
 
     shutdown_SENC_server();
+
+    if (m_ochartsAPI)
+    {
+        delete m_ochartsAPI;
+        m_ochartsAPI = nullptr;
+        UpdateApiPtr();
+    }
 
     return true;
 
@@ -877,20 +887,20 @@ wxBitmap *o_charts_pi::GetPlugInBitmap()
 
 wxString o_charts_pi::GetCommonName()
 {
-      return _("o-charts");
+      return _("deeprey-ocharts");
 }
 
 
 wxString o_charts_pi::GetShortDescription()
 {
-      return _("PlugIn for OpenCPN o-charts charts");
+      return _("PlugIn for OpenCPN o-charts charts for deeprey-gui");
 }
 
 
 wxString o_charts_pi::GetLongDescription()
 {
       return _("PlugIn for OpenCPN\n\
-Provides support of o-charts charts.\n\n\
+Provides support of o-charts charts for deeprey-gui.\n\n\
 ");
 
 }
@@ -902,7 +912,10 @@ wxArrayString o_charts_pi::GetDynamicChartClassNameArray()
 
 void o_charts_pi::SetPluginMessage(wxString &message_id, wxString &message_body)
 {
-
+    if (message_id == _T("DP_GUI_TO_OCHARTS")) {
+        UpdateApiPtr();
+        return;
+    }
     if(message_id == _T("OpenCPN Config"))
     {
 
@@ -5699,4 +5712,10 @@ wxString GetDefaultChartInstallDirectory()
     rv = fna.GetFullPath();
 #endif
     return rv;
+}
+
+void o_charts_pi::UpdateApiPtr()
+{
+    wxString apiPtrStr = wxString::Format("%llu", (unsigned long long)m_ochartsAPI);
+    SendPluginMessage("OCHARTS_API_TO_DP_GUI", apiPtrStr);
 }

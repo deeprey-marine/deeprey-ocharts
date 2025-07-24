@@ -4866,7 +4866,7 @@ bool shopPanel::OnButtonUpdate()
     //::wxBeginBusyCursor();
     int err_code = getChartList( false );               // no login error code dialog, we handle here
     bool ok = err_code == 0;
-    return ok;
+    
     //::wxEndBusyCursor();
 
     // Could be a change in login_key, userName, or password.
@@ -4909,7 +4909,8 @@ bool shopPanel::OnButtonUpdate()
     //    wxYield();
     //    return;
     //}
-    //g_chartListUpdatedOK = true;
+    g_chartListUpdatedOK = true;
+    return ok;
 
     //// Record the date of the last successful update.
     //wxDateTime now = wxDateTime::Now();

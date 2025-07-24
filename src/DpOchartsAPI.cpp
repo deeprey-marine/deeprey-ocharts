@@ -5,13 +5,20 @@
 int doLogin( /*wxWindow *parent*/ wxString dpLogin, wxString dpPass);
 extern wxString g_dpMessage;
 extern std::vector<itemChart*> ChartVector;
-bool DpOchartsAPI::Login(const wxString& username, const wxString& password) {
+extern wxString                        g_loginUser;
+extern wxString                        g_loginKey;
+bool DpOchartsAPI::Login(const wxString& username, const wxString& password, wxString& loginKey) {
     g_dpMessage = wxEmptyString;
     bool ok = doLogin(username, password) == 1;
+    if (ok) loginKey = g_loginKey;
     m_lastError = g_dpMessage.Trim(false);
     return ok;
 }
-bool DpOchartsAPI::ValidateStoredCredentials(const wxString& username, const wxString& loginKey){ return loginKey.Len() != 0; }
+bool DpOchartsAPI::ValidateStoredCredentials(const wxString& username, const wxString& loginKey){
+    g_loginUser = username;
+    g_loginKey = loginKey;
+    return !username.empty() && !loginKey.empty();
+}
 void DpOchartsAPI::Logout(){ }
 
 std::vector<DpOchartsChartInfo> DpOchartsAPI::GetAvailableCharts() {
@@ -31,14 +38,15 @@ std::vector<DpOchartsChartInfo> DpOchartsAPI::GetCharts() {
         dpChart.id = chart->chartID;
         dpChart.name = chart->chartName;
         dpChart.version = chart->serverChartEdition;
-        dpChart.installedVersion = chart->GetActiveSlot()->installedEdition;        
+        itemSlot* slot = chart->GetActiveSlot();
+        dpChart.installedVersion = slot ? wxString(slot->installedEdition) : wxEmptyString;
         wxString::const_iterator dummy;
-        dpChart.expiryDate.ParseFormat(chart->expDate, &dummy);
+        dpChart.expiryDate.ParseFormat(chart->expDate, "%Y-%m-%d %H:%M:%S", &dummy);
         int status = chart->getChartStatus();
         static const std::map<int, DpChartStatus> statusToDpStatus = {
             { STAT_EXPIRED, DpChartStatus::EXPIRED },
-            { STAT_PURCHASED_NOSLOT, DpChartStatus::INSTALLED },
-            { STAT_PURCHASED, DpChartStatus::INSTALLED },
+            { STAT_PURCHASED_NOSLOT, DpChartStatus::AVAILABLE },
+            { STAT_PURCHASED, DpChartStatus::AVAILABLE },
             { STAT_REQUESTABLE, DpChartStatus::AVAILABLE },
             { STAT_CURRENT, DpChartStatus::INSTALLED },
             { STAT_STALE, DpChartStatus::UPDATE_AVAILABLE }
@@ -46,18 +54,25 @@ std::vector<DpOchartsChartInfo> DpOchartsAPI::GetCharts() {
         auto it = statusToDpStatus.find(status);
         dpChart.status = it == statusToDpStatus.end() ? DpChartStatus::CHART_ERROR : it->second;
         dpChart.sizeBytes = 0;
-        itemSlot* slot = chart->GetActiveSlot();
-        for (itemTaskFileInfo* fileInfo : slot->taskFileList)
+       
+        if (slot)
         {
-            wxString fileSizeStr(fileInfo->fileSize);
-            unsigned long long fileSizeULL;
-            if (fileSizeStr.ToULongLong(&fileSizeULL)) dpChart.sizeBytes += fileSizeULL;
+            for (itemTaskFileInfo* fileInfo : slot->taskFileList)
+            {
+                wxString fileSizeStr(fileInfo->fileSize);
+                unsigned long long fileSizeULL;
+                if (fileSizeStr.ToULongLong(&fileSizeULL)) dpChart.sizeBytes += fileSizeULL;
+            }
         }
         dpChart.description = chart->chartName;
-        dpChart.region = chart->chartName;
-        dpChart.thumbnailPath = wxEmptyString; // what is this for ?
-        dpChart.lastModified.ParseFormat(chart->editionDate, &dummy);
+        dpChart.region = chart->chartID;
+        dpChart.thumbnailPath = wxEmptyString; // what is this for ?                
+        wxString editionDateStr(chart->editionDate);
+        unsigned long long editionDateULL;
+        if (editionDateStr.ToULongLong(&editionDateULL))
+            dpChart.lastModified = wxDateTime((time_t)editionDateULL);
         dpChart.downloadPercent = 0;
+        dpChart.previewBitmap = chart->GetChartThumbnail(100, true);
 
         result.push_back(dpChart);
     }

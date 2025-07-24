@@ -8,7 +8,7 @@ class IDpOchartsAPI {
 public:
    virtual ~IDpOchartsAPI() = default;
    
-   virtual bool Login(const wxString& username, const wxString& password) = 0;
+   virtual bool Login(const wxString& username, const wxString& password, wxString& loginKey) = 0;
    virtual bool ValidateStoredCredentials(const wxString& username, const wxString& loginKey) = 0;
    virtual void Logout() = 0;
    

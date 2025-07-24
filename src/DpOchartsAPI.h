@@ -4,7 +4,7 @@
 class DpOchartsAPI : public IDpOchartsAPI
 {
 public:
-    virtual bool Login(const wxString& username, const wxString& password);
+    virtual bool Login(const wxString& username, const wxString& password, wxString& loginKey);
     virtual bool ValidateStoredCredentials(const wxString& username, const wxString& loginKey);
     virtual void Logout();
 

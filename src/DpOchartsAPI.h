@@ -31,5 +31,6 @@ public:
     virtual void SyncWithService();
     virtual wxDateTime GetLastSyncTime();
 private:
+    std::vector<DpOchartsChartInfo> GetCharts();
     wxString m_lastError;
 };

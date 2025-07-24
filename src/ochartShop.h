@@ -445,7 +445,7 @@ public:
 
     void SetChartOverrideStatus( wxString status );
     void ClearChartOverrideStatus();
-    wxString GetDongleName();
+    static wxString GetDongleName();
 
     oesu_piScreenLog *m_shopLog;
 
@@ -464,6 +464,7 @@ public:
     oeXChartPanel *GetSelectedChartPanel(){ return m_ChartPanelSelected; }
 
     void OnButtonUpdate( wxCommandEvent& event );
+    static bool OnButtonUpdate();
     void OnButtonInfo( wxCommandEvent& event );
     void OnButtonDownload( wxCommandEvent& event );
     void OnButtonCancelOp( wxCommandEvent& event );
@@ -489,7 +490,7 @@ public:
     //bool GetNewSystemName( bool bShowAll = true);
     int processTask(itemSlot *slot, itemChart *chart, itemTaskFileInfo *task);
     bool validateSHA256(std::string fileName, std::string shaSum);
-    int GetShopNameFromFPR();
+    static int GetShopNameFromFPR();
     bool GetAndValidateSystemName();
 
     void onDLEvent(OCPN_downloadEvent &evt);

@@ -10,7 +10,7 @@ mkdir build
 
 cd build
 
-Configure the build environment ( use your own path instead of C:/Projects/): cmake -A Win32 -G "Visual Studio 17 2022" -DCMAKE_GENERATOR_PLATFORM=Win32 -DwxWidgets_LIB_DIR=C:/Projects/deeprey-ocharts/cache/wxWidgets/lib/vc14x_dll -DwxWidgets_ROOT_DIR=C:/Projects/deeprey-ocharts/cache/wxWidgets ..
+Configure the build environment ( use your own path instead of C:/Projects/): cmake -A Win32 -G "Visual Studio 17 2022" -DCMAKE_GENERATOR_PLATFORM=Win32 -DwxWidgets_LIB_DIR=C:/Projects/deeprey-ocharts/cache/wxWidgets-3.2.1/lib/vc14x_dll -DwxWidgets_ROOT_DIR=C:/Projects/deeprey-ocharts/cache/wxWidgets-3.2.1 ..
 
 On windows, add -DDEPLOY_ON_BUILD=1 if you want plugin dll auto-copy into import location.
 

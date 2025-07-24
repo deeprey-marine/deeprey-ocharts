@@ -1696,10 +1696,10 @@ itemSlot *itemChart::GetActiveSlot(){
 int itemChart::getChartStatus()
 {
 
-    if(!g_chartListUpdatedOK){
-        m_status = STAT_NEED_REFRESH;
-        return m_status;
-    }
+    //if(!g_chartListUpdatedOK){
+    //    m_status = STAT_NEED_REFRESH;
+    //    return m_status;
+    //}
 
     if(isChartsetExpired()){
         m_status = STAT_EXPIRED;
@@ -4815,13 +4815,17 @@ bool shopPanel::GetAndValidateSystemName()
   return true;
 }
 
-
-void shopPanel::OnButtonUpdate( wxCommandEvent& event )
+void shopPanel::OnButtonUpdate(wxCommandEvent& event)
 {
-    m_shopLog->ClearLog();
+    OnButtonUpdate();
+}
 
-    // Deselect any selected chart
-    DeselectAllCharts();
+bool shopPanel::OnButtonUpdate()
+{
+    //m_shopLog->ClearLog();
+
+    //// Deselect any selected chart
+    //DeselectAllCharts();
 
 #ifdef __ANDROID__
     if(!g_systemName.Length()){
@@ -4833,12 +4837,12 @@ void shopPanel::OnButtonUpdate( wxCommandEvent& event )
 #endif
 
     g_LastErrorMessage.Clear();
-    SetErrorMessage();
+    //SetErrorMessage();
 
     //  Do we need an initial login to get the persistent key?
     if(g_loginKey.Len() == 0){
         if(true)//doLogin( g_shopPanel ) != 1)
-            return;
+            return false;
         saveShopConfig();
     }
 
@@ -4853,81 +4857,83 @@ void shopPanel::OnButtonUpdate( wxCommandEvent& event )
       GetShopNameFromFPR();
     }
 
-    RefreshSystemName();
+    //RefreshSystemName();
 
-     setStatusText( _("Contacting o-charts server..."));
+    /* setStatusText( _("Contacting o-charts server..."));
      g_ipGauge->Start();
-     wxYield();
+     wxYield();*/
 
-    ::wxBeginBusyCursor();
+    //::wxBeginBusyCursor();
     int err_code = getChartList( false );               // no login error code dialog, we handle here
-    ::wxEndBusyCursor();
+    bool ok = err_code == 0;
+    return ok;
+    //::wxEndBusyCursor();
 
     // Could be a change in login_key, userName, or password.
     // if so, force a full (no_key) login, and retry
-    if((err_code == 4) || (err_code == 5) || (err_code == 6)){
-        setStatusText( _("Status: Login error."));
-        g_ipGauge->Stop();
-        wxYield();
-        if(true)//doLogin(g_shopPanel) != 1)      // if the second login attempt fails, return to GUI
-            return;
-        saveShopConfig();
+    //if((err_code == 4) || (err_code == 5) || (err_code == 6)){        
+       // setStatusText( _("Status: Login error."));
+      /*  g_ipGauge->Stop();
+        wxYield();*/
+        //if(true)//doLogin(g_shopPanel) != 1)      // if the second login attempt fails, return to GUI
+        //    return;
+        //saveShopConfig();
 
-        // Try to get the status one more time only.
-        ::wxBeginBusyCursor();
-        int err_code_2 = getChartList( false );               // no error code dialog, we handle here
-        ::wxEndBusyCursor();
+        //// Try to get the status one more time only.
+        //::wxBeginBusyCursor();
+        //int err_code_2 = getChartList( false );               // no error code dialog, we handle here
+        //::wxEndBusyCursor();
 
-        if(err_code_2 != 0){                  // Some error on second getlist() try, if so just return to GUI
+        //if(err_code_2 != 0){                  // Some error on second getlist() try, if so just return to GUI
 
-            if((err_code_2 == 4) || (err_code_2 == 5) || (err_code_2 == 6))
-                setStatusText( _("Status: Login error."));
-            else{
-                wxString ec;
-                ec.Printf(_T(" { %d }"), err_code_2);
-                setStatusText( _("Status: Communications error.") + ec);
-                ClearChartOverrideStatus();
+        //    if((err_code_2 == 4) || (err_code_2 == 5) || (err_code_2 == 6))
+        //        setStatusText( _("Status: Login error."));
+        //    else{
+        //        wxString ec;
+        //        ec.Printf(_T(" { %d }"), err_code_2);
+        //        setStatusText( _("Status: Communications error.") + ec);
+        //        //ClearChartOverrideStatus();
 
-            }
-            g_ipGauge->Stop();
-            wxYield();
-            return;
-        }
-    }
+        //    }
+        //    g_ipGauge->Stop();
+        //    wxYield();
+        //    return;
+        //}
+    //}
 
-    else if(err_code != 0){                  // Some other error
-        wxString ec;
-        ec.Printf(_T(" { %d }"), err_code);
-        setStatusText( _("Status: Communications error.") + ec);
-        g_ipGauge->Stop();
-        wxYield();
-        return;
-    }
-    g_chartListUpdatedOK = true;
+    //else if(err_code != 0){                  // Some other error
+    //    wxString ec;
+    //    ec.Printf(_T(" { %d }"), err_code);
+    //    setStatusText( _("Status: Communications error.") + ec);
+    //    g_ipGauge->Stop();
+    //    wxYield();
+    //    return;
+    //}
+    //g_chartListUpdatedOK = true;
 
-    // Record the date of the last successful update.
-    wxDateTime now = wxDateTime::Now();
-    g_lastShopUpdate = now.FormatDate();
-    wxFileConfig *pConf = (wxFileConfig *) g_pconfig;
-    if( pConf ) {
-        pConf->SetPath( _T("/PlugIns/ocharts") );
-        pConf->Write( _T("LastUpdate"), g_lastShopUpdate );
-    }
+    //// Record the date of the last successful update.
+    //wxDateTime now = wxDateTime::Now();
+    //g_lastShopUpdate = now.FormatDate();
+    //wxFileConfig *pConf = (wxFileConfig *) g_pconfig;
+    //if( pConf ) {
+    //    pConf->SetPath( _T("/PlugIns/ocharts") );
+    //    pConf->Write( _T("LastUpdate"), g_lastShopUpdate );
+    //}
 
-    SortChartList();
+    //SortChartList();
 
-    RefreshSystemName();
+    //RefreshSystemName();
 
-    setStatusText( _("Status: Ready"));
-    g_ipGauge->Stop();
+    //setStatusText( _("Status: Ready"));
+    //g_ipGauge->Stop();
 
-    UpdateChartList();
+    //UpdateChartList();
 
-    UpdateChartInfoFiles();
+    //UpdateChartInfoFiles();
 
-    saveShopConfig();
+    //saveShopConfig();
 
-    scrubCache();
+    //scrubCache();
 
 }
 

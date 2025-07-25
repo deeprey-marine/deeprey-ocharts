@@ -5179,6 +5179,7 @@ void o_charts_pi::OnSetupOptions( void )
     m_pOptionsPage->SetSizer( sizer );
 
     m_shoppanel = new shopPanel( m_pOptionsPage, wxID_ANY, wxDefaultPosition, wxDefaultSize );
+    m_ochartsAPI->SetShopPanel(m_shoppanel);
 
      m_pOptionsPage->InvalidateBestSize();
      sizer->Add( m_shoppanel, 1, wxEXPAND );

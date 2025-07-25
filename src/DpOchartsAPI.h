@@ -1,9 +1,12 @@
 #pragma once
 #include "IDpOchartsAPI.h"
+class shopPanel;
 
 class DpOchartsAPI : public IDpOchartsAPI
 {
 public:
+    DpOchartsAPI();
+    void SetShopPanel(shopPanel* shoppanel);
     virtual bool Login(const wxString& username, const wxString& password, wxString& loginKey);
     virtual bool ValidateStoredCredentials(const wxString& username, const wxString& loginKey);
     virtual void Logout();
@@ -33,4 +36,5 @@ public:
 private:
     std::vector<DpOchartsChartInfo> GetCharts();
     wxString m_lastError;
+    shopPanel* m_shoppanel;
 };

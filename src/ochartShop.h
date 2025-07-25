@@ -468,30 +468,32 @@ public:
     void OnButtonInfo( wxCommandEvent& event );
     void OnButtonDownload( wxCommandEvent& event );
     void OnButtonCancelOp( wxCommandEvent& event );
+    void OnButtonCancelOp();
     void OnButtonInstall( wxCommandEvent& event );
+    void OnButtonInstall(itemChart* chart);
     void OnButtonInstallChain( wxCommandEvent& event );
     void ValidateChartset( wxCommandEvent& event );
 
     void OnPrepareTimer(wxTimerEvent &evt);
-    int doPrepareGUI(itemSlot *activeSlot);
+    static int doPrepareGUI(itemChart* chart, itemSlot *activeSlot);
     int doDownloadGui( itemChart *targetChart, itemSlot *targetSlot);
 
     void UpdateChartList();
     void OnGetNewSystemName( wxCommandEvent& event );
     void OnChangeSystemName( wxCommandEvent& event );
     //bool doSystemNameWizard( bool bshowAll);
-    wxString doGetNewSystemName( );
+    static wxString doGetNewSystemName( );
     void UpdateActionControls();
     void setStatusText( const wxString &text ){ m_staticTextStatus->SetLabel( text );  m_staticTextStatus->Refresh(); }
     wxString getStatusText(){ return m_staticTextStatus->GetLabel(); }
     void setStatusTextProgress( const wxString &text ){ m_staticTextStatus/*m_staticTextStatusProgress*/->SetLabel( text );  /*m_staticTextStatusProgress->Refresh();*/ }
     void MakeChartVisible(oeXChartPanel *chart);
-    int ComputeUpdates(itemChart *chart, itemSlot *slot);
+    static int ComputeUpdates(itemChart *chart, itemSlot *slot);
     //bool GetNewSystemName( bool bShowAll = true);
     int processTask(itemSlot *slot, itemChart *chart, itemTaskFileInfo *task);
     bool validateSHA256(std::string fileName, std::string shaSum);
     static int GetShopNameFromFPR();
-    bool GetAndValidateSystemName();
+    static bool GetAndValidateSystemName();
 
     void onDLEvent(OCPN_downloadEvent &evt);
 

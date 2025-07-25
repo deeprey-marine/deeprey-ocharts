@@ -140,6 +140,10 @@ extern OKeyHash keyMapSystem;
 extern o_charts_pi *g_pi;
 bool g_bShowExpired;
 
+wxString g_dpMessage;
+std::function<void(int percent)> g_dpDownloadProgressCallback;
+std::function<void(bool success, const wxString& error)> g_dpDownloadCompleteCallback;
+
 #define ID_CMD_BUTTON_INSTALL 7783
 #define ID_CMD_BUTTON_INSTALL_CHAIN 7784
 #define ID_CMD_BUTTON_VALIDATE 7785
@@ -2285,7 +2289,7 @@ void saveShopConfig()
    pConf->Flush();
 }
 
-wxString g_dpMessage;
+
 
 int checkResult(wxString &result, bool bShowLoginErrorDialog = true)
 {
@@ -3057,7 +3061,7 @@ wxArrayString breakPath( wxWindow *win, wxString path, int pix_width)
         accum += temp[it];
 
         sz = win->GetTextExtent(accum);
-        if(sz.x > pix_width){
+        if(sz.x > pix_width && !previous.empty()){
             rv.Add(previous);
             //printf("%s\n", static_cast<const char*>(previous));
             accum.Clear();
@@ -3437,9 +3441,14 @@ int doUploadXFPR(bool bDongle)
 
     return 0;
 }
+int doPrepare(itemChart* chart, itemSlot* slot);
+int doPrepare(oeXChartPanel* chartPrepare, itemSlot* slot)
+{
+    itemChart* chart = chartPrepare->GetSelectedChart();
+    return doPrepare(chart, slot);
+}
 
-
-int doPrepare(oeXChartPanel *chartPrepare, itemSlot *slot)
+int doPrepare(itemChart* chart, itemSlot *slot)
 {
     // Request a chart preparation
     wxString url = userURL;
@@ -3447,9 +3456,7 @@ int doPrepare(oeXChartPanel *chartPrepare, itemSlot *slot)
         url = adminURL;
 
     url +=_T("?fc=module&module=occharts&controller=apioesu");
-
-
-    itemChart *chart = chartPrepare->GetSelectedChart();
+    
 
 
 /*
@@ -3662,8 +3669,8 @@ bool ExtractZipFiles( const wxString& aZipFile, const wxString& aTargetDir, bool
         wxZipInputStream zip(in);
         ret = false;
 
-        if(g_ipGauge)
-            g_ipGauge->Start();
+        //if(g_ipGauge)
+        //    g_ipGauge->Start();
 
         while( entry.reset(zip.GetNextEntry()), entry.get() != NULL )
         {
@@ -3724,14 +3731,14 @@ bool ExtractZipFiles( const wxString& aZipFile, const wxString& aTargetDir, bool
 
                 wxFileOutputStream file(name);
 
-                g_shopPanel->setStatusText( _("Unzipping chart files...") + fn.GetFullName());
-                g_shopPanel->SetChartOverrideStatus(_("Unpacking charts"));
+                //g_shopPanel->setStatusText( _("Unzipping chart files...") + fn.GetFullName());
+                //g_shopPanel->SetChartOverrideStatus(_("Unpacking charts"));
 
 
 
-                if(g_ipGauge)
-                    g_ipGauge->Pulse();
-                wxYield();
+                //if(g_ipGauge)
+                //    g_ipGauge->Pulse();
+                //wxYield();
 
                 if( !file )
                 {
@@ -4794,21 +4801,21 @@ bool shopPanel::GetAndValidateSystemName()
                     nTry++;
                 }
                 wxString sn = _("System Name:");
-                m_staticTextSystemName->SetLabel(sn);
+      /*          m_staticTextSystemName->SetLabel(sn);
                 m_staticTextSystemName->Refresh();
 
-                setStatusText(_("Status: Ready"));
+                setStatusText(_("Status: Ready"));*/
                 return true;
             }
 
             g_systemName.Clear();
             saveShopConfig(); // Record the blank systemName
 
-            wxString sn = _("System Name:");
+            /*wxString sn = _("System Name:");
             m_staticTextSystemName->SetLabel(sn);
             m_staticTextSystemName->Refresh();
 
-            setStatusText(_("Status: Ready"));
+            setStatusText(_("Status: Ready"));*/
             return true;
     }
   }
@@ -5783,7 +5790,7 @@ int shopPanel::processTask(itemSlot *slot, itemChart *chart, itemTaskFileInfo *t
         }
 
         // Process added/modified charts
-        g_shopPanel->SetChartOverrideStatus( _("Finalizing charts"));
+        //g_shopPanel->SetChartOverrideStatus( _("Finalizing charts"));
         for(unsigned int i = 0 ; i < actionAddUpdate.size() ; i++){
             wxString extension = _T(".oesu");
             if(chart->chartType == CHART_TYPE_OERNC)
@@ -5798,7 +5805,7 @@ int shopPanel::processTask(itemSlot *slot, itemChart *chart, itemTaskFileInfo *t
             }
 
             wxString destination = destinationDir + fileTarget;
-            g_shopPanel->setStatusText( _("Relocating chart files...") + fileTarget);
+            //g_shopPanel->setStatusText( _("Relocating chart files...") + fileTarget);
             wxYield();
 
             if(wxFileExists(destination)){
@@ -5927,9 +5934,9 @@ int shopPanel::processTask(itemSlot *slot, itemChart *chart, itemTaskFileInfo *t
               destination += src.Mid(it + chartTopLevelZip.Length() + 1);
             wxString source = fileArrayTXT.Item(i);
 
-            wxFileName fnm(source);
+            /*wxFileName fnm(source);
             g_shopPanel->setStatusText( _("Relocating chart files...") + fnm.GetFullName());
-            wxYield();
+            wxYield();*/
 
             // Make the dir if necessary
             wxFileName fn(destination);
@@ -5961,7 +5968,7 @@ int shopPanel::processTask(itemSlot *slot, itemChart *chart, itemTaskFileInfo *t
         RemDirRF(tmp_Zipdir);
     }
 
-    g_shopPanel->SetChartOverrideStatus( "...");
+    //g_shopPanel->SetChartOverrideStatus( "...");
 
     return 0;
 }
@@ -6137,11 +6144,13 @@ wxString ChooseInstallDir(wxString wk_installDir)
 void shopPanel::OnButtonInstallChain( wxCommandEvent& event )
 {
     // Chained through from download end event
-
+    
     if(m_bAbortingDownload){
         m_bAbortingDownload = false;
-        ShowOERNCMessageDialog(NULL, _("Chart download cancelled."), _("o-charts_pi Message"), wxOK);
-        UpdateActionControls();
+        if (g_dpDownloadCompleteCallback)
+            g_dpDownloadCompleteCallback(false, "Chart download cancelled.");
+        //ShowOERNCMessageDialog(NULL, _("Chart download cancelled."), _("o-charts_pi Message"), wxOK);
+        //UpdateActionControls();
         return;
     }
 
@@ -6182,7 +6191,7 @@ void shopPanel::OnButtonInstallChain( wxCommandEvent& event )
             }
         }
 
-        SetChartOverrideStatus(_("Downloading..."));
+        //SetChartOverrideStatus(_("Downloading..."));
 
 
 #ifdef __OCPN_USE_CURL__
@@ -6206,8 +6215,8 @@ void shopPanel::OnButtonInstallChain( wxCommandEvent& event )
 
 #endif
         gtargetSlot->idlQueue++;        // next
-        m_buttonCancelOp->Show();
-        GetSizer()->Layout();
+        //m_buttonCancelOp->Show();
+        //GetSizer()->Layout();
 
         return;
     }
@@ -6218,7 +6227,7 @@ void shopPanel::OnButtonInstallChain( wxCommandEvent& event )
         m_binstallChain = false;
 
         //  Download is apparently done.
-        ClearChartOverrideStatus();
+        //ClearChartOverrideStatus();
 
         // Parse the task definitions, decide what to do
 
@@ -6285,19 +6294,19 @@ void shopPanel::OnButtonInstallChain( wxCommandEvent& event )
                     else{                               // Change
                         bool bProceed = showInstallInfoDialog( ChartsetNormalName );
                         if(!bProceed){
-                            ClearChartOverrideStatus();
+                           /* ClearChartOverrideStatus();
                             setStatusText( _("Status: Ready"));
                             UpdateChartList();
-                            UpdateActionControls();
+                            UpdateActionControls();*/
                             return;
                         }
 
                         wxString idir = ChooseInstallDir(installDir);
                         if(!idir.Length()){
-                            ClearChartOverrideStatus();
+                          /*  ClearChartOverrideStatus();
                             setStatusText( _("Status: Ready"));
                             UpdateChartList();
-                            UpdateActionControls();
+                            UpdateActionControls();*/
                             return;
                         }
 
@@ -6312,19 +6321,19 @@ void shopPanel::OnButtonInstallChain( wxCommandEvent& event )
                     else{
                         bool bProceed = showInstallInfoDialog( ChartsetNormalName );
                         if(!bProceed){
-                            ClearChartOverrideStatus();
+                            /*ClearChartOverrideStatus();
                             setStatusText( _("Status: Ready"));
                             UpdateChartList();
-                            UpdateActionControls();
+                            UpdateActionControls();*/
                             return;
                         }
 
                         wxString idir = ChooseInstallDir(installDir);
                         if(!idir.Length()){
-                            ClearChartOverrideStatus();
+                            /*ClearChartOverrideStatus();
                             setStatusText( _("Status: Ready"));
                             UpdateChartList();
-                            UpdateActionControls();
+                            UpdateActionControls();*/
                             return;
                         }
 
@@ -6351,15 +6360,15 @@ void shopPanel::OnButtonInstallChain( wxCommandEvent& event )
                 int rv = 0;
                 rv = processTask(gtargetSlot, gtargetChart, pTask);
                 if(rv){
-                    ClearChartOverrideStatus();
-                    setStatusText( _("Status: Ready"));
+                  /*  ClearChartOverrideStatus();
+                    setStatusText( _("Status: Ready"));*/
                     wxString msg = _("Chart installation ERROR.");
                     wxString msg1;
                     msg1.Printf(_T(" %d"), rv);
                     msg += msg1;
                     ShowOERNCMessageDialog(NULL, msg, _("o-charts_pi Message"), wxOK);
-                    UpdateChartList();
-                    UpdateActionControls();
+                   /* UpdateChartList();
+                    UpdateActionControls();*/
                     return;
                 }
             }
@@ -6369,10 +6378,10 @@ void shopPanel::OnButtonInstallChain( wxCommandEvent& event )
         }
 
         else{                   // This is a logical error, should not happen
-            ClearChartOverrideStatus();
+           /* ClearChartOverrideStatus();
             setStatusText( _("Status: Ready"));
             UpdateChartList();
-            UpdateActionControls();
+            UpdateActionControls();*/
             return;
         }
 
@@ -6408,15 +6417,15 @@ void shopPanel::OnButtonInstallChain( wxCommandEvent& event )
         saveShopConfig();
 
 
-        ClearChartOverrideStatus();
-        setStatusText( _("Status: Ready"));
-        wxString message_ok =_("Chart installation complete.\n");
-        ClearChartOverrideStatus();
-        if(!g_benableRebuild){
-            message_ok += _("Don't forget to rebuild chart database\n (See manual)");
-        }
+       /* ClearChartOverrideStatus();
+        setStatusText( _("Status: Ready"));*/
+        //wxString message_ok =_("Chart installation complete.\n");
+        ////ClearChartOverrideStatus();
+        //if(!g_benableRebuild){
+        //    message_ok += _("Don't forget to rebuild chart database\n (See manual)");
+        //}
 
-        ShowOERNCMessageDialog(NULL, message_ok , _("o-charts_pi Message"), wxOK);
+        //ShowOERNCMessageDialog(NULL, message_ok , _("o-charts_pi Message"), wxOK);
 
         // Show any EULA here
         wxArrayString fileArrayEULA;
@@ -6430,34 +6439,43 @@ void shopPanel::OnButtonInstallChain( wxCommandEvent& event )
 
 
 
-        UpdateChartList();
+        //UpdateChartList();
 
         UpdateChartInfoFiles();
 
-        UpdateActionControls();
+        //UpdateActionControls();
+
+        if (g_dpDownloadCompleteCallback)
+            g_dpDownloadCompleteCallback(true, g_dpMessage);
 
         return;
     }
 }
 
-void shopPanel::OnButtonInstall( wxCommandEvent& event )
+void shopPanel::OnButtonInstall(wxCommandEvent& event)
 {
-    itemChart *chart = m_ChartPanelSelected->GetSelectedChart();
+    itemChart* chart = m_ChartPanelSelected->GetSelectedChart();
+    OnButtonInstall(chart);
+}
+
+void shopPanel::OnButtonInstall(itemChart* chart)
+{
+    
     if(!chart)
         return;
 
     g_LastErrorMessage.Clear();
-    SetErrorMessage();
+    //SetErrorMessage();
 
     //  System name is required to install
     if (!GetAndValidateSystemName())
         return;
 
-    SetChartOverrideStatus( _("Installing...") );
+    //SetChartOverrideStatus( _("Installing...") );
 
-    setStatusText( _("Preparing installation..."));
+    //setStatusText( _("Preparing installation..."));
 
-    wxYield();
+    //wxYield();
 
     // Check the dongle
     g_dongleName.Clear();
@@ -6469,12 +6487,12 @@ void shopPanel::OnButtonInstall( wxCommandEvent& event )
         g_dongleName = wxString(sName);
     }
 
-    m_buttonInstall->Disable();
+   /* m_buttonInstall->Disable();
     m_buttonValidate->Hide();
     m_buttonCancelOp->Hide();
     GetSizer()->Layout();
 
-    wxYield();
+    wxYield();*/
 
 
     // If this is an update, or re-install, then decide what systemName (or dongleName) is to be used
@@ -6499,13 +6517,13 @@ void shopPanel::OnButtonInstall( wxCommandEvent& event )
         else{
             if(!g_systemName.Length()){
                 g_systemName = doGetNewSystemName();
-                RefreshSystemName();
+                //RefreshSystemName();
             }
 
             if(!g_systemName.Length()){
                 saveShopConfig();       // record blank system name.
-                UpdateActionControls();
-                RefreshSystemName();
+                //UpdateActionControls();
+                //RefreshSystemName();
                 return;
             }
             selectedSystemName = g_systemName;
@@ -6526,10 +6544,10 @@ void shopPanel::OnButtonInstall( wxCommandEvent& event )
         if( res1 != 0){
             if(res1 < 200)
                 g_dongleName.Clear();
-            ClearChartOverrideStatus();
+       /*     ClearChartOverrideStatus();
             setStatusText( _("Status: Dongle FPR upload error"));
 
-            UpdateActionControls();
+            UpdateActionControls();*/
             return;
         }
     }
@@ -6538,12 +6556,12 @@ void shopPanel::OnButtonInstall( wxCommandEvent& event )
         if( res2 != 0){
             if(res2 < 200)
                 g_systemName.Clear();
-            ClearChartOverrideStatus();
-            setStatusText( _("Status: System FPR upload error"));
+           /* ClearChartOverrideStatus();
+            setStatusText( _("Status: System FPR upload error"));*/
             saveShopConfig();       // record blank system name.
-            RefreshSystemName();
+           /* RefreshSystemName();
 
-            UpdateActionControls();
+            UpdateActionControls();*/
 
             return;
         }
@@ -6575,11 +6593,11 @@ void shopPanel::OnButtonInstall( wxCommandEvent& event )
             }
         }
 
-        if(qtyIndex < 0){
+      /*  if(qtyIndex < 0){
             wxLogMessage(_T("oeRNC Error: No available slot found for unassigned chart."));
             UpdateActionControls();
             return;
-        }
+        }*/
 
         // Ready to assign.
         //Try to assign to dongle first.....
@@ -6592,8 +6610,8 @@ void shopPanel::OnButtonInstall( wxCommandEvent& event )
 
         if(assignResult != 0){
             wxLogMessage(_T("oeRNC Error: Slot doAssign()."));
-            ClearChartOverrideStatus();
-            UpdateActionControls();
+            /*ClearChartOverrideStatus();
+            UpdateActionControls();*/
             return;
         }
 
@@ -6610,7 +6628,7 @@ void shopPanel::OnButtonInstall( wxCommandEvent& event )
     itemSlot *activeSlot = chart->GetActiveSlot();
     if(!activeSlot){
         wxLogMessage(_T("oeRNC Error: active slot not defined."));
-        UpdateActionControls();
+        //UpdateActionControls();
         return;
     }
 
@@ -6623,19 +6641,19 @@ void shopPanel::OnButtonInstall( wxCommandEvent& event )
     if(bNeedRequestWait){
 
         ::wxBeginBusyCursor();
-        request_return = doPrepareGUI(activeSlot);
+        request_return = doPrepareGUI(chart, activeSlot);
         ::wxEndBusyCursor();
 
         if(request_return != 0){
-            if(g_ipGauge)
-                g_ipGauge->Stop();
+            /*if(g_ipGauge)
+                g_ipGauge->Stop();*/
 
-            m_buttonCancelOp->Hide();
+         /*   m_buttonCancelOp->Hide();
             ClearChartOverrideStatus();
 
             SetErrorMessage();
             UpdateChartList();
-            UpdateActionControls();
+            UpdateActionControls();*/
 
 
             return;
@@ -6691,36 +6709,36 @@ void shopPanel::OnButtonDownload( wxCommandEvent& event )
 #endif
 }
 
-int shopPanel::doPrepareGUI(itemSlot *targetSlot)
+int shopPanel::doPrepareGUI(itemChart* chart, itemSlot *targetSlot)
 {
-    m_buttonCancelOp->Hide();
-    GetSizer()->Layout();
-    wxYield();
+    //m_buttonCancelOp->Hide();
+    //GetSizer()->Layout();
+    //wxYield();
 
-    setStatusText( _("Requesting License Keys"));
-    SetChartOverrideStatus( _("Requesting License Keys"));
+    //setStatusText( _("Requesting License Keys"));
+    //SetChartOverrideStatus( _("Requesting License Keys"));
 
-    m_prepareTimerCount = 8;            // First status query happens in 2 seconds
-    m_prepareProgress = 0;
-    m_prepareTimeout = 60;
+    //m_prepareTimerCount = 8;            // First status query happens in 2 seconds
+    //m_prepareProgress = 0;
+    //m_prepareTimeout = 60;
 
 //    m_prepareTimer.SetOwner( this, 4357 );
 
-    wxYield();
+    //wxYield();
 
-    int err_code = doPrepare(m_ChartPanelSelected, targetSlot);
+    int err_code = doPrepare(chart, targetSlot);
     if(err_code != 0){                  // Some error
 //             wxString ec;
 //             ec.Printf(_T(" { %d }"), err_code);
 //             setStatusText( _("Status: Communications error.") + ec);
-            if(g_ipGauge)
+            /*if(g_ipGauge)
                 g_ipGauge->Stop();
 
             m_prepareTimer.Stop();
             ClearChartOverrideStatus();
 
             SetErrorMessage();
-            UpdateActionControls();
+            UpdateActionControls();*/
 
             return err_code;
     }
@@ -6729,17 +6747,17 @@ int shopPanel::doPrepareGUI(itemSlot *targetSlot)
 
 int shopPanel::doDownloadGui(itemChart *targetChart, itemSlot* targetSlot)
 {
-    setStatusText( _("Status: Downloading..."));
-    //m_staticTextStatusProgress->Show();
-    m_buttonCancelOp->Hide();
-    GetButtonUpdate()->Disable();
+    //setStatusText( _("Status: Downloading..."));
+    ////m_staticTextStatusProgress->Show();
+    //m_buttonCancelOp->Hide();
+    //GetButtonUpdate()->Disable();
 
-    SetChartOverrideStatus(_("Downloading..."));
-    UpdateChartList();
-    m_buttonValidate->Hide();
-    m_buttonCancelOp->Hide();
+    //SetChartOverrideStatus(_("Downloading..."));
+    //UpdateChartList();
+    //m_buttonValidate->Hide();
+    //m_buttonCancelOp->Hide();
 
-    wxYield();
+    //wxYield();
 
     m_binstallChain = true;
     m_bAbortingDownload = false;
@@ -6749,40 +6767,44 @@ int shopPanel::doDownloadGui(itemChart *targetChart, itemSlot* targetSlot)
 
 }
 
-void shopPanel::OnButtonCancelOp( wxCommandEvent& event )
+void shopPanel::OnButtonCancelOp(wxCommandEvent& event)
 {
-    if(m_prepareTimer.IsRunning()){
-        m_prepareTimer.Stop();
-        g_ipGauge->Stop();
-    }
+    OnButtonCancelOp();
+}
+void shopPanel::OnButtonCancelOp()
+{
+    //if(m_prepareTimer.IsRunning()){
+    //    m_prepareTimer.Stop();
+    //    g_ipGauge->Stop();
+    //}
 
 #ifdef __OCPN_USE_CURL__
     if(g_curlDownloadThread){
         m_bAbortingDownload = true;
         g_curlDownloadThread->Abort();
-        g_ipGauge->Stop();
-        setStatusTextProgress(_T(""));
+        //g_ipGauge->Stop();
+        //setStatusTextProgress(_T(""));
         m_binstallChain = true;
     }
 #else
     OCPN_cancelDownloadFileBackground(g_FileDownloadHandle);
     m_bAbortingDownload = true;
-    g_ipGauge->Stop();
-    setStatusTextProgress(_T(""));
+    //g_ipGauge->Stop();
+    //setStatusTextProgress(_T(""));
     m_binstallChain = true;
 #endif
 
-    setStatusText( _("Status: OK"));
-    m_buttonCancelOp->Hide();
+    //setStatusText( _("Status: OK"));
+    //m_buttonCancelOp->Hide();
 
-    ClearChartOverrideStatus();
-    m_buttonInstall->Enable();
-    m_buttonUpdate->Enable();
-    GetSizer()->Layout();
+    //ClearChartOverrideStatus();
+    //m_buttonInstall->Enable();
+    //m_buttonUpdate->Enable();
+    //GetSizer()->Layout();
 
-    SetErrorMessage();
+    //SetErrorMessage();
 
-    UpdateChartList();
+    //UpdateChartList();
 
 }
 
@@ -7586,7 +7608,7 @@ void OESENC_CURL_EvtHandler::onBeginEvent(wxCurlBeginPerformEvent &evt)
 {
  //   ShowOERNCMessageDialog(NULL, _("DLSTART."), _("oeSENC_PI Message"), wxOK);
     g_shopPanel->m_startedDownload = true;
-    g_shopPanel->m_buttonCancelOp->Show();
+    //g_shopPanel->m_buttonCancelOp->Show();
 
 }
 
@@ -7594,12 +7616,12 @@ void OESENC_CURL_EvtHandler::onEndEvent(wxCurlEndPerformEvent &evt)
 {
  //   ShowOERNCMessageDialog(NULL, _("DLEnd."), _("oeSENC_PI Message"), wxOK);
 
-    g_ipGauge->Stop();
+ /*   g_ipGauge->Stop();
     g_shopPanel->setStatusTextProgress(_T(""));
     g_shopPanel->setStatusText( _("Status: OK"));
-    g_shopPanel->m_buttonCancelOp->Hide();
+    g_shopPanel->m_buttonCancelOp->Hide();*/
     //g_shopPanel->GetButtonDownload()->Hide();
-    g_shopPanel->GetButtonUpdate()->Enable();
+    //g_shopPanel->GetButtonUpdate()->Enable();
 
     if(downloadOutStream){
         downloadOutStream->Close();
@@ -7608,7 +7630,7 @@ void OESENC_CURL_EvtHandler::onEndEvent(wxCurlEndPerformEvent &evt)
 
     long responseCode = evt.GetResponseCode();
     if (responseCode != 200){
-      g_shopPanel->setStatusText( _("Status: Error"));
+      //g_shopPanel->setStatusText( _("Status: Error"));
       wxLogError(_T("o-charts_pi: Download error"));
       wxString msg;
       msg.Printf(_("File Download error"));
@@ -7617,9 +7639,14 @@ void OESENC_CURL_EvtHandler::onEndEvent(wxCurlEndPerformEvent &evt)
       wxString msg1;
       msg1.Printf("%d", (int)responseCode);
       msg += msg1;
-      ShowOERNCMessageDialog(NULL, msg, _("o-charts_pi Message"), wxOK);
+      g_dpMessage += " " + msg;
+      //ShowOERNCMessageDialog(NULL, msg, _("o-charts_pi Message"), wxOK);
 
-      g_shopPanel->ResetUI();
+      //g_shopPanel->ResetUI();
+
+      if (g_dpDownloadCompleteCallback)
+          g_dpDownloadCompleteCallback(false, g_dpMessage);
+
       return;
     }
 
@@ -7654,7 +7681,6 @@ void OESENC_CURL_EvtHandler::onEndEvent(wxCurlEndPerformEvent &evt)
 
 }
 
-
 void OESENC_CURL_EvtHandler::onProgressEvent(wxCurlDownloadEvent &evt)
 {
     dl_now = evt.GetDownloadedBytes();
@@ -7663,22 +7689,24 @@ void OESENC_CURL_EvtHandler::onProgressEvent(wxCurlDownloadEvent &evt)
     // Calculate the gauge value
     if(evt.GetTotalBytes() > 0){
         float progress = evt.GetDownloadedBytes()/evt.GetTotalBytes();
-        g_ipGauge->SetValue(progress * 100);
+        if (g_dpDownloadProgressCallback)
+            g_dpDownloadProgressCallback(progress * 100);
+        //g_ipGauge->SetValue(progress * 100);
     }
 
     wxDateTime now = wxDateTime::Now();
     if(now.GetTicks() != g_progressTicks){
-        std::string speedString = evt.GetHumanReadableSpeed(" ", 0);
+        //std::string speedString = evt.GetHumanReadableSpeed(" ", 0);
 
     //  Set text status
-        wxString tProg;
+  /*      wxString tProg;
         tProg = _("Downloaded:  ");
         wxString msg;
         msg.Printf( _T("%6.1f MiB / %4.0f MiB    "), (float)(evt.GetDownloadedBytes() / 1e6), (float)(evt.GetTotalBytes() / 1e6));
         msg += wxString( speedString.c_str(), wxConvUTF8);
         tProg += msg;
 
-        g_shopPanel->setStatusTextProgress( tProg );
+        g_shopPanel->setStatusTextProgress( tProg );*/
 
         g_progressTicks = now.GetTicks();
     }

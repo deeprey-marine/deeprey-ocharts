@@ -7,6 +7,13 @@ extern wxString g_dpMessage;
 extern std::vector<itemChart*> ChartVector;
 extern wxString                        g_loginUser;
 extern wxString                        g_loginKey;
+extern itemChart* gtargetChart;
+
+extern std::function<void(int percent)> g_dpDownloadProgressCallback;
+extern std::function<void(bool success, const wxString& error)> g_dpDownloadCompleteCallback;
+
+DpOchartsAPI::DpOchartsAPI() :m_shoppanel(nullptr) {}
+void DpOchartsAPI::SetShopPanel(shopPanel* shoppanel) { m_shoppanel = shoppanel; }
 bool DpOchartsAPI::Login(const wxString& username, const wxString& password, wxString& loginKey) {
     g_dpMessage = wxEmptyString;
     bool ok = doLogin(username, password) == 1;
@@ -89,9 +96,31 @@ std::vector<DpOchartsChartInfo> DpOchartsAPI::GetInstalledCharts(){
 
 void DpOchartsAPI::DownloadChart(const wxString& chartId,
     ProgressCallback onProgress,
-    CompleteCallback onComplete){ }
+    CompleteCallback onComplete){ 
+    for (itemChart* chart : ChartVector)
+    {
+        if (chart->chartID == chartId)
+        {
+            g_dpDownloadProgressCallback = onProgress;
+            g_dpDownloadCompleteCallback = onComplete;
+            g_dpMessage = wxEmptyString;
+            m_shoppanel->OnButtonInstall(chart);
+            break;
+        }
+    }
+}
 
-bool DpOchartsAPI::CancelDownload(const wxString& chartId){ return false; }
+bool DpOchartsAPI::CancelDownload(const wxString& chartId){ 
+    if (gtargetChart->chartID == chartId)
+    {
+        m_shoppanel->OnButtonCancelOp();
+        return true;
+    }
+    else
+    {
+        return false;
+    }
+}
 bool DpOchartsAPI::IsDownloading(const wxString& chartId){ return false; }
 wxString DpOchartsAPI::GetLastError() const { return m_lastError; }
 

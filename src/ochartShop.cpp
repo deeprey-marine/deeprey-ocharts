@@ -2442,7 +2442,7 @@ int doLogin( /*wxWindow *parent*/ wxString dpLogin, wxString dpPass )
         wxYield();
         return 55;
     }*/
-
+  
     g_loginUser = /*login.m_UserNameCtl->GetValue()*/dpLogin.Trim( true).Trim( false );
     pass = /*login.m_PasswordCtl->GetValue()*/dpPass.Trim( true).Trim( false );
 
@@ -2473,7 +2473,7 @@ int doLogin( /*wxWindow *parent*/ wxString dpLogin, wxString dpPass )
     pass = getPassEncode(pass);
     taskID = "login2";
 #endif
-
+    
     wxString url = userURL;
     if(g_admin)
         url = adminURL;
@@ -3100,58 +3100,60 @@ bool showInstallInfoDialog( wxString newChartDir)
 
 bool showReinstallInfoDialog( wxString chartBaseDir, wxString newChartDir)
 {
-    wxString cl = chartBaseDir + wxFileName::GetPathSeparator() + newChartDir;
-    wxArrayString cla = breakPath( g_shopPanel, cl, g_shopPanel->GetSize().x * 7 / 10);
-
-    wxString msg = _("This chartset will be re-installed in the following location.\n\n");
-    for(unsigned int i=0 ; i < cla.GetCount() ; i++){
-            msg += cla[i];
-            msg += _T("\n");
-    }
-//     msg += chartBaseDir;
-//     msg += wxFileName::GetPathSeparator();
-//     msg += newChartDir;
-    msg += _T("\n\n");
-    msg += _("If you want to use that location, press \"Continue\" \n\n");
-    msg += _("If you want to change the installation location now, press \"Change\" \n\n");
-
-    MessageHardBreakWrapper wrapper(g_shopPanel, msg, g_shopPanel->GetSize().x * 8 / 10);
-
-    int ret = ShowScrollMessageDialog(NULL, wrapper.GetWrapped(), _("o-charts_pi Message"),
-                                      _("Continue"), _("Change"), 0);
-
-    if(ret != wxID_YES)
-        return false;
-    else
-        return true;
+//    wxString cl = chartBaseDir + wxFileName::GetPathSeparator() + newChartDir;
+//    wxArrayString cla = breakPath( g_shopPanel, cl, g_shopPanel->GetSize().x * 7 / 10);
+//
+//    wxString msg = _("This chartset will be re-installed in the following location.\n\n");
+//    for(unsigned int i=0 ; i < cla.GetCount() ; i++){
+//            msg += cla[i];
+//            msg += _T("\n");
+//    }
+////     msg += chartBaseDir;
+////     msg += wxFileName::GetPathSeparator();
+////     msg += newChartDir;
+//    msg += _T("\n\n");
+//    msg += _("If you want to use that location, press \"Continue\" \n\n");
+//    msg += _("If you want to change the installation location now, press \"Change\" \n\n");
+//
+//    MessageHardBreakWrapper wrapper(g_shopPanel, msg, g_shopPanel->GetSize().x * 8 / 10);
+//
+//    int ret = ShowScrollMessageDialog(NULL, wrapper.GetWrapped(), _("o-charts_pi Message"),
+//                                      _("Continue"), _("Change"), 0);
+//
+//    if(ret != wxID_YES)
+//        return false;
+//    else
+//        return true;
+    return true;
 }
 
 bool showInstallConfirmDialog( wxString chartBaseDir, wxString newChartDir)
 {
-    wxString cl = chartBaseDir + wxFileName::GetPathSeparator() + newChartDir;
-    wxArrayString cla = breakPath( g_shopPanel, cl, g_shopPanel->GetSize().x * 7 / 10);
-
-    wxString msg = _("This chartset will be installed in the following location.\n\n");
-    for(unsigned int i=0 ; i < cla.GetCount() ; i++){
-            msg += cla[i];
-            msg += _T("\n");
-    }
-//    msg += chartBaseDir;
-//    msg += wxFileName::GetPathSeparator();
-//    msg += newChartDir;
-    msg += _T("\n\n");
-    msg += _("If you want to use that location, press \"Continue\" \n\n");
-    msg += _("If you want to change the installation location now, press \"Change\" \n\n");
-
-    MessageHardBreakWrapper wrapper(g_shopPanel, msg, g_shopPanel->GetSize().x * 8 / 10);
-
-    int ret = ShowScrollMessageDialog(NULL, wrapper.GetWrapped(), _("o-charts_pi Message"),
-                                      _("Continue"), _("Change"), 0);
-
-    if(ret != wxID_YES)
-        return false;
-    else
-        return true;
+//    wxString cl = chartBaseDir + wxFileName::GetPathSeparator() + newChartDir;
+//    wxArrayString cla = breakPath( g_shopPanel, cl, g_shopPanel->GetSize().x * 7 / 10);
+//
+//    wxString msg = _("This chartset will be installed in the following location.\n\n");
+//    for(unsigned int i=0 ; i < cla.GetCount() ; i++){
+//            msg += cla[i];
+//            msg += _T("\n");
+//    }
+////    msg += chartBaseDir;
+////    msg += wxFileName::GetPathSeparator();
+////    msg += newChartDir;
+//    msg += _T("\n\n");
+//    msg += _("If you want to use that location, press \"Continue\" \n\n");
+//    msg += _("If you want to change the installation location now, press \"Change\" \n\n");
+//
+//    MessageHardBreakWrapper wrapper(g_shopPanel, msg, g_shopPanel->GetSize().x * 8 / 10);
+//
+//    int ret = ShowScrollMessageDialog(NULL, wrapper.GetWrapped(), _("o-charts_pi Message"),
+//                                      _("Continue"), _("Change"), 0);
+//
+//    if(ret != wxID_YES)
+//        return false;
+//    else
+//        return true;
+    return true;
 }
 
 int doAssign(itemChart *chart, int qtyIndex, wxString systemName)
@@ -3576,7 +3578,7 @@ int doDownload(itemChart *targetChart, itemSlot *targetSlot)
         task1.SHA256_Verified = false;
         targetSlot->taskFileList[i]->cacheKeysLocn = task1.localFile;
         targetSlot->dlQueue.push_back(task1);
-
+        
         // Next, the chart payload file
         itemDLTask task2;
         downloadURL = wxString(targetSlot->taskFileList[i]->link.c_str());
@@ -6401,9 +6403,9 @@ void shopPanel::OnButtonInstallChain( wxCommandEvent& event )
                 break;
             }
         }
-        if( !covered ){
+    /*    if( !covered ){
             AddChartDirectory( targetAddDir );
-        }
+        }*/
 
         g_lastInstallDir = gtargetSlot->installLocation;
 
@@ -6411,8 +6413,8 @@ void shopPanel::OnButtonInstallChain( wxCommandEvent& event )
         keyMapDongle.clear();
         keyMapSystem.clear();
 
-        if(g_benableRebuild)
-            ForceChartDBUpdate();
+        /*if(g_benableRebuild)
+            ForceChartDBUpdate();*/
 
         saveShopConfig();
 
@@ -6437,7 +6439,7 @@ void shopPanel::OnButtonInstallChain( wxCommandEvent& event )
 //             pab->Destroy();
         }
 
-
+        
 
         //UpdateChartList();
 
@@ -6445,6 +6447,12 @@ void shopPanel::OnButtonInstallChain( wxCommandEvent& event )
 
         //UpdateActionControls();
 
+        if (!covered) {
+            wxArrayString newDirArray(GetChartDBDirArrayString());
+            newDirArray.Add(targetAddDir);
+            UpdateChartDBInplace(newDirArray, true, false);
+        }
+        
         if (g_dpDownloadCompleteCallback)
             g_dpDownloadCompleteCallback(true, g_dpMessage);
 

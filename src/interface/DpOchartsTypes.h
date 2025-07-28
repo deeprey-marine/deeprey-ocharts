@@ -18,6 +18,8 @@ enum class DpChartStatus {
 
 struct DpOchartsChartInfo {
    wxString id;
+   wxString orderRef;
+   std::vector<wxString> assigments;
    wxString name;
    wxString version;
    wxString installedVersion;

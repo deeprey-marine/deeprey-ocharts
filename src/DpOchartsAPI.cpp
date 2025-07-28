@@ -43,13 +43,15 @@ std::vector<DpOchartsChartInfo> DpOchartsAPI::GetCharts() {
         DpOchartsChartInfo dpChart;
 
         dpChart.id = chart->chartID;
+        dpChart.orderRef = chart->orderRef;        
         dpChart.name = chart->chartName;
         dpChart.version = chart->serverChartEdition;
+        int status = chart->getChartStatus();
         itemSlot* slot = chart->GetActiveSlot();
         dpChart.installedVersion = slot ? wxString(slot->installedEdition) : wxEmptyString;
         wxString::const_iterator dummy;
         dpChart.expiryDate.ParseFormat(chart->expDate, "%Y-%m-%d %H:%M:%S", &dummy);
-        int status = chart->getChartStatus();
+        
         static const std::map<int, DpChartStatus> statusToDpStatus = {
             { STAT_EXPIRED, DpChartStatus::EXPIRED },
             { STAT_PURCHASED_NOSLOT, DpChartStatus::AVAILABLE },
@@ -80,6 +82,14 @@ std::vector<DpOchartsChartInfo> DpOchartsAPI::GetCharts() {
             dpChart.lastModified = wxDateTime((time_t)editionDateULL);
         dpChart.downloadPercent = 0;
         dpChart.previewBitmap = chart->GetChartThumbnail(100, true);
+        
+        for (itemQuantity& Qty: chart->quantityList) {
+            for (itemSlot* slot : Qty.slotList) {
+                wxString assignment = chart->getKeytypeString(slot->slotUuid) + 
+                    _T("    ") + wxString(slot->assignedSystemName.c_str());
+                dpChart.assigments.push_back(assignment);
+            }
+        }    
 
         result.push_back(dpChart);
     }

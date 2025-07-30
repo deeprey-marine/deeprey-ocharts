@@ -1,3 +1,6 @@
 [submodule "opencpn-libs"]
 	path = opencpn-libs
 	url = https://github.com/OpenCPN/opencpn-libs.git
+[submodule "deeprey-api"]
+	path = deeprey-api
+	url = https://github.com/deeprey-marine/deeprey-api.git

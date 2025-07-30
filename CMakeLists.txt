@@ -46,7 +46,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC" AND DEPLOY_ON_BUILD)
     )
 endif()
 
-include_directories("${CMAKE_CURRENT_SOURCE_DIR}/src/interface")
+include_directories("${CMAKE_CURRENT_SOURCE_DIR}/deeprey-api/o-charts")
 include_directories(BEFORE ${CMAKE_BINARY_DIR}/include)
 
 add_subdirectory("opencpn-libs/${PKG_API_LIB}")

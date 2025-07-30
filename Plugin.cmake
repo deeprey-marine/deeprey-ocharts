@@ -114,8 +114,8 @@ set(SRC
   src/validator.cpp
   src/viewport.cpp
   libs/gdal/src/s57classregistrar.cpp
-  src/interface/DpOchartsTypes.h
-  src/interface/IDpOchartsAPI.h
+  deeprey-api/o-charts/DpOchartsTypes.h
+  deeprey-api/o-charts/IDpOchartsAPI.h
   src/DpOchartsAPI.cpp
   src/DpOchartsAPI.h
 )

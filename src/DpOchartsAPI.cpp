@@ -48,7 +48,7 @@ std::vector<DpOchartsChartInfo> DpOchartsAPI::GetCharts() {
         dpChart.version = chart->serverChartEdition;
         int status = chart->getChartStatus();
         itemSlot* slot = chart->GetActiveSlot();
-        dpChart.installedVersion = slot ? wxString(slot->installedEdition) : wxEmptyString;
+        dpChart.installedVersion = slot ? wxString(slot->installedEdition) : wxString();
         wxString::const_iterator dummy;
         dpChart.expiryDate.ParseFormat(chart->expDate, "%Y-%m-%d %H:%M:%S", &dummy);
         

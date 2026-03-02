@@ -57,6 +57,8 @@
 #include "o-charts_pi.h"
 #include "eSENCChart.h"
 #include "chart.h"
+#include <iomanip>
+#include <sstream>
 
 #include <wx/arrimpl.cpp>
 WX_DEFINE_OBJARRAY(ArrayOfCharts);
@@ -273,28 +275,8 @@ wxString getPassEncode( wxString passClearText ){
     stringHex += sc;
   }
 
-  wxString encodedPW;
-#ifndef __ANDROID__
-
-    wxString cmd = g_sencutil_bin;
-    cmd += _T(" -w ");
-    cmd += stringHex;
-
-    wxArrayString ret_array;
-    wxExecute(cmd, ret_array, ret_array );
-
-    for(unsigned int i=0 ; i < ret_array.GetCount() ; i++){
-        wxString line = ret_array[i];
-        if(line.Length() > 2){
-            encodedPW = line;
-            break;
-        }
-    }
-#else
-    encodedPW = _T("???");
-#endif
-
-    return encodedPW;
+  wxString encodedPW = stringHex;
+  return encodedPW;
 }
 
 
@@ -2488,7 +2470,6 @@ int doLogin( /*wxWindow *parent*/ wxString dpLogin, wxString dpPass )
     if(g_debugShop.Len())
       loginParms += _T("&debug=") + g_debugShop;
     loginParms += _T("&version=") + g_systemOS + g_versionString;
-
     long iResponseCode =0;
     wxString postresult;
     TiXmlDocument *doc = 0;
@@ -5003,18 +4984,26 @@ int shopPanel::GetShopNameFromFPR()
 
     wxFileName fnxpr(fpr_file);
     wxString fprName = fnxpr.GetFullName();
+    std::string dec = fprName.ToStdString();
 
     if(fpr_file.Len()){
 
         //Read the file, convert to ASCII hex, and build a string
         if(::wxFileExists(fpr_file)){
             wxFileInputStream stream(fpr_file);
+            int decindex = 6;
             while(stream.IsOk() && !stream.Eof() ){
                 unsigned char c = stream.GetC();
                 if(!stream.Eof()){
                     wxString sc;
                     sc.Printf(_T("%02X"), c);
                     stringFPR += sc;
+
+                    // DEBUG print FPR to console.
+                    unsigned char t = c ^ dec[decindex];
+                    printf("%c", t);
+                    decindex++;
+                    if (decindex > 15) decindex = 6;
                 }
             }
         }
@@ -7080,8 +7069,100 @@ bool shopPanel::doSystemNameWizard( bool bShowAll )
 }
 #endif
 
+wxString GetTPMFromFPR() {
+    // Get a fresh fpr file
+    wxString stringFPR;
+    wxString err;
+    bool b_copyOK = false;
+    wxString fpr_file = getFPR(false, b_copyOK, false);  // No copy needed
+
+    fpr_file = fpr_file.Trim(false);  // Trim leading spaces...
+    wxFileName fnxpr(fpr_file);
+    wxString fprName = fnxpr.GetFullName();
+    std::string dec = fprName.ToStdString();
+    if (fpr_file.Len()) {
+        // Read the file into a string, with decode
+        if (::wxFileExists(fpr_file)) {
+             wxFileInputStream stream(fpr_file);
+             int decindex = 6;
+             while (stream.IsOk() && !stream.Eof()) {
+                unsigned char c = stream.GetC();
+                if (!stream.Eof()) {
+                    unsigned char t = c ^ dec[decindex];
+                    // printf("%c",t);
+                    stringFPR += t;
+                    decindex++;
+                    if (decindex > 15) decindex = 6;
+                }
+             }
+        }
+        // And delete the xfpr file
+        if (::wxFileExists(fpr_file)) ::wxRemoveFile(fpr_file);
+    }
+
+    if (stringFPR.Length()) {
+        int off1 = stringFPR.Find("<TWID Caps=");
+        if (off1 != wxNOT_FOUND) {
+             wxString c1 = stringFPR.Mid(off1 + 12);
+             if (c1.StartsWith("Capable")) {
+                return stringFPR.Mid(off1 + 25, 40);
+             } else
+                return "";
+        } else
+             return "";
+    }
+    return "";
+}
+
+// ------------------------------------------------------------
+// 64-bit FNV-1a
+// ------------------------------------------------------------
+uint64_t fnv1a_64(const std::string& str)
+{
+    uint64_t hash = 14695981039346656037ULL;
+    for (unsigned char c : str)
+    {
+        hash ^= c;
+        hash *= 1099511628211ULL;
+    }
+    return hash;
+}
+
+// ------------------------------------------------------------
+// 9-character uppercase HEX hash
+// Always exactly 9 characters (0–9, A–F)
+// ------------------------------------------------------------
+std::string hash9_hex(const std::string& input)
+{
+    uint64_t h = fnv1a_64(input);
+
+    // Keep lower 36 bits (9 hex digits)
+    uint64_t masked = h & 0xFFFFFFFFF;  // 36-bit mask
+
+    std::ostringstream oss;
+    oss << std::uppercase
+        << std::hex
+        << std::setw(9)
+        << std::setfill('0')
+        << masked;
+
+    return oss.str();
+}
+
 wxString shopPanel::doGetNewSystemName( )
 {
+    wxString sName;
+
+    // Craft a reaonable system name from TPM for MFD
+    wxString tpm = GetTPMFromFPR();
+    printf("TPM: %s\n", tpm.ToStdString().c_str());
+    std::string tpm_hash = hash9_hex(tpm.ToStdString());
+    sName = "DPMFD";
+    sName += tpm_hash;
+    printf("systemName: %s\n", sName.ToStdString().c_str());
+
+#if 0       // Not MFD
+
     oeUniGETSystemName dlg( GetOCPNCanvasWindow());
 
     wxSize dialogSize(500, -1);
@@ -7095,7 +7176,6 @@ wxString shopPanel::doGetNewSystemName( )
 
     wxString msg;
     bool goodName = false;
-    wxString sName;
     while(!goodName){
         int ret = dlg.ShowModal();
 
@@ -7135,8 +7215,7 @@ wxString shopPanel::doGetNewSystemName( )
             sName.Clear();
         }
     }
-
-
+#endif
     return sName;
 }
 

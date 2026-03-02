@@ -35,6 +35,8 @@ public:
     virtual wxDateTime GetLastSyncTime();
 private:
     std::vector<DpOchartsChartInfo> GetCharts();
+    shopPanel* EnsureShopPanel();
     wxString m_lastError;
     shopPanel* m_shoppanel;
+    wxFrame* m_hiddenFrame;
 };

@@ -1,5 +1,6 @@
 #include "DpOchartsAPI.h"
 #include "ochartShop.h"
+#include "ocpn_plugin.h"
 #include <map>
 
 int doLogin( /*wxWindow *parent*/ wxString dpLogin, wxString dpPass);
@@ -8,12 +9,27 @@ extern std::vector<itemChart*> ChartVector;
 extern wxString                        g_loginUser;
 extern wxString                        g_loginKey;
 extern itemChart* gtargetChart;
+extern shopPanel *g_shopPanel;
 
 extern std::function<void(int percent)> g_dpDownloadProgressCallback;
 extern std::function<void(bool success, const wxString& error)> g_dpDownloadCompleteCallback;
 
-DpOchartsAPI::DpOchartsAPI() :m_shoppanel(nullptr) {}
+DpOchartsAPI::DpOchartsAPI() :m_shoppanel(nullptr), m_hiddenFrame(nullptr) {}
 void DpOchartsAPI::SetShopPanel(shopPanel* shoppanel) { m_shoppanel = shoppanel; }
+
+shopPanel* DpOchartsAPI::EnsureShopPanel() {
+    if(m_shoppanel)
+        return m_shoppanel;
+    if(g_shopPanel)
+        return g_shopPanel;
+
+    // Create a hidden shopPanel for headless API use
+    if(!m_hiddenFrame)
+        m_hiddenFrame = new wxFrame(GetOCPNCanvasWindow(), wxID_ANY, _T(""), wxDefaultPosition, wxSize(1,1), wxFRAME_NO_TASKBAR);
+    m_shoppanel = new shopPanel(m_hiddenFrame, wxID_ANY, wxDefaultPosition, wxDefaultSize);
+    m_shoppanel->Hide();
+    return m_shoppanel;
+}
 bool DpOchartsAPI::Login(const wxString& username, const wxString& password, wxString& loginKey) {
     g_dpMessage = wxEmptyString;
     bool ok = doLogin(username, password) == 1;
@@ -106,7 +122,12 @@ std::vector<DpOchartsChartInfo> DpOchartsAPI::GetInstalledCharts(){
 
 void DpOchartsAPI::DownloadChart(const wxString& chartId,
     ProgressCallback onProgress,
-    CompleteCallback onComplete){ 
+    CompleteCallback onComplete){
+    shopPanel* panel = EnsureShopPanel();
+    if(!panel){
+        if(onComplete) onComplete(false, _("Shop panel not available"));
+        return;
+    }
     for (itemChart* chart : ChartVector)
     {
         if (chart->chartID == chartId)
@@ -114,16 +135,18 @@ void DpOchartsAPI::DownloadChart(const wxString& chartId,
             g_dpDownloadProgressCallback = onProgress;
             g_dpDownloadCompleteCallback = onComplete;
             g_dpMessage = wxEmptyString;
-            m_shoppanel->OnButtonInstall(chart);
+            panel->OnButtonInstall(chart);
             break;
         }
     }
 }
 
-bool DpOchartsAPI::CancelDownload(const wxString& chartId){ 
+bool DpOchartsAPI::CancelDownload(const wxString& chartId){
+    shopPanel* panel = EnsureShopPanel();
+    if(!panel) return false;
     if (gtargetChart->chartID == chartId)
     {
-        m_shoppanel->OnButtonCancelOp();
+        panel->OnButtonCancelOp();
         return true;
     }
     else

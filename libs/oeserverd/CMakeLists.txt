@@ -28,42 +28,33 @@ if (QT_ANDROID)
 elseif (APPLE)
   install_libs("osx/oexserverd" "osx/libsglmac-2.38.0.0.dylib.x86_64")
 elseif (UNIX AND ARCH  STREQUAL "x86_64")
-  configure_file(
-    ${CMAKE_CURRENT_LIST_DIR}/linux64/oexserverd
-    ${CMAKE_INSTALL_PREFIX}/bin/oexserverd COPYONLY
-  )
-  configure_file(
-    ${CMAKE_CURRENT_LIST_DIR}/linux64/libsgllnx64-2.29.02.so
-    ${CMAKE_INSTALL_PREFIX}/bin/libsgllnx64-2.29.02.so COPYONLY
-  )
+  file(COPY ${CMAKE_CURRENT_LIST_DIR}/linux64/oexserverd
+    DESTINATION ${CMAKE_INSTALL_PREFIX}/bin/
+    FILE_PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
+  file(COPY ${CMAKE_CURRENT_LIST_DIR}/linux64/libsgllnx64-2.29.02.so
+    DESTINATION ${CMAKE_INSTALL_PREFIX}/bin/
+    FILE_PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ)
 elseif (UNIX AND ARCH STREQUAL "armhf")
-  configure_file(
-    ${CMAKE_CURRENT_LIST_DIR}/linuxarm/oexserverd
-    ${CMAKE_INSTALL_PREFIX}/bin/oexserverd COPYONLY
-  )
-  configure_file(
-    ${CMAKE_CURRENT_LIST_DIR}/linuxarm/libsglarmhf32-2.30.0.0.so
-    ${CMAKE_INSTALL_PREFIX}/bin/libsglarmhf32-2.30.0.0.so COPYONLY
-  )
+  file(COPY ${CMAKE_CURRENT_LIST_DIR}/linuxarm/oexserverd
+    DESTINATION ${CMAKE_INSTALL_PREFIX}/bin/
+    FILE_PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
+  file(COPY ${CMAKE_CURRENT_LIST_DIR}/linuxarm/libsglarmhf32-2.30.0.0.so
+    DESTINATION ${CMAKE_INSTALL_PREFIX}/bin/
+    FILE_PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ)
 elseif (UNIX AND ARCH STREQUAL "arm64")
-  configure_file(
-    ${CMAKE_CURRENT_LIST_DIR}/linuxarm64/oexserverd
-    ${CMAKE_INSTALL_PREFIX}/bin/oexserverd COPYONLY
-  )
-  configure_file(
-    ${CMAKE_CURRENT_LIST_DIR}/linuxarm64/libsglarm64-2.31.0.0.so
-    ${CMAKE_INSTALL_PREFIX}/bin/libsglarm64-2.31.0.0.so COPYONLY
-  )
+  file(COPY ${CMAKE_CURRENT_LIST_DIR}/linuxarm64/oexserverd
+    DESTINATION ${CMAKE_INSTALL_PREFIX}/bin/
+    FILE_PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
+  file(COPY ${CMAKE_CURRENT_LIST_DIR}/linuxarm64/libsglarm64-2.31.0.0.so
+    DESTINATION ${CMAKE_INSTALL_PREFIX}/bin/
+    FILE_PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ)
 elseif (UNIX)
-  # 32-bit amd64: is this really useful?
-  configure_file(
-    ${CMAKE_CURRENT_LIST_DIR}/linux/oeserverd
-    ${CMAKE_INSTALL_PREFIX}/bin/oeserverd COPYONLY
-  )
-  configure_file(
-    ${CMAKE_CURRENT_LIST_DIR}/linux/libsgllnx-2.29.0.1.so
-    ${CMAKE_INSTALL_PREFIX}/bin/libsgllnx-2.29.0.1.so COPYONLY
-  )
+  file(COPY ${CMAKE_CURRENT_LIST_DIR}/linux/oeserverd
+    DESTINATION ${CMAKE_INSTALL_PREFIX}/bin/
+    FILE_PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
+  file(COPY ${CMAKE_CURRENT_LIST_DIR}/linux/libsgllnx-2.29.0.1.so
+    DESTINATION ${CMAKE_INSTALL_PREFIX}/bin/
+    FILE_PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ)
 elseif (WIN32)
   file(GLOB_RECURSE vcdll_files "win/*.dll")
   message(STATUS "GLOB vcdll_files: ${vcdll_files}")

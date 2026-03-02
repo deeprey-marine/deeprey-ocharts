@@ -248,11 +248,20 @@ wxString getFPR( bool bCopyToDesktop, bool &bCopyOK, bool bSGLock, wxString extr
             //            cmd += tst_cedilla;            // testing
 #endif
             wxLogMessage(_T("Create FPR command: ") + cmd);
+            wxLog::FlushActive();
 
+            wxLogMessage(_T("getFPR: calling wxBeginBusyCursor"));
+            wxLog::FlushActive();
             ::wxBeginBusyCursor();
+
+            wxLogMessage(_T("getFPR: calling wxExecute"));
+            wxLog::FlushActive();
 
             wxArrayString ret_array, err_array;
             wxExecute(cmd, ret_array, err_array );
+
+            wxLogMessage(_T("getFPR: wxExecute returned"));
+            wxLog::FlushActive();
 
             ::wxEndBusyCursor();
             wxLogMessage(_T("Create FPR oeaserverd results:"));

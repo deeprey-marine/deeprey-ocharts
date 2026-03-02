@@ -1668,6 +1668,15 @@ itemSlot *itemChart::GetActiveSlot(){
         return rv;
 
     int qtyIndex = FindQuantityIndex( m_activeQtyID );
+    if(qtyIndex < 0 || qtyIndex >= (int)quantityList.size()){
+        wxLogMessage(_T("o-charts_pi: GetActiveSlot ERROR qtyIndex=%d for m_activeQtyID=%d"), qtyIndex, m_activeQtyID);
+        return rv;
+    }
+    if(m_assignedSlotIndex >= (int)quantityList[qtyIndex].slotList.size()){
+        wxLogMessage(_T("o-charts_pi: GetActiveSlot ERROR m_assignedSlotIndex=%d >= slotList.size=%d"),
+            m_assignedSlotIndex, (int)quantityList[qtyIndex].slotList.size());
+        return rv;
+    }
     return quantityList[qtyIndex].slotList[m_assignedSlotIndex];
 }
 
@@ -3242,7 +3251,8 @@ int doAssign(itemChart *chart, int qtyIndex, wxString systemName)
 
 int doUploadXFPR(bool bDongle)
 {
-    wxLogMessage("doUploadXFPR");
+    wxLogMessage("doUploadXFPR bDongle=%d", (int)bDongle);
+    wxLog::FlushActive();
     wxString err;
     wxString stringFPR;
     wxString fprName;
@@ -3251,7 +3261,12 @@ int doUploadXFPR(bool bDongle)
     // Generate the FPR file
     bool b_copyOK = false;
 
+    wxLogMessage("doUploadXFPR: calling getFPR");
+    wxLog::FlushActive();
     wxString fpr_file = getFPR( false, b_copyOK, bDongle);              // No copy needed
+
+    wxLogMessage("doUploadXFPR: getFPR returned: %s", fpr_file.c_str());
+    wxLog::FlushActive();
 
     fpr_file = fpr_file.Trim(false);            // Trim leading spaces...
 
@@ -3380,9 +3395,10 @@ int doUploadXFPR(bool bDongle)
         //printf("%s", post.GetResponseBody().c_str());
 
 
-        wxLogMessage("doUploadXFPR:CURL: response");
+        wxLogMessage("doUploadXFPR:CURL: response code=%ld", iResponseCode);
         wxString tt(post.GetResponseBody().data(), wxConvUTF8);
         wxLogMessage(tt);
+        wxLog::FlushActive();
 #else
         wxString postresult;
         //qDebug() << url.mb_str();
@@ -3517,16 +3533,23 @@ int doPrepare(itemChart* chart, itemSlot *slot)
 
 int doDownload(itemChart *targetChart, itemSlot *targetSlot)
 {
+    wxLogMessage(_T("o-charts_pi: doDownload entry, taskFileList size=%d"), (int)targetSlot->taskFileList.size());
+    wxLog::FlushActive();
+
     //  Create the download queue for all files necessary.
 
     wxString Prefix = _T("oeRNC");
     if(targetChart->GetChartType() == CHART_TYPE_OEUSENC)
         Prefix = _T("oeuSENC");
 
+    wxLogMessage(_T("o-charts_pi: doDownload: Prefix=%s, clearing dlQueue"), Prefix.c_str());
+    wxLog::FlushActive();
     targetSlot->dlQueue.clear();
 
     for(unsigned int i=0 ; i < targetSlot->taskFileList.size() ; i++){
 
+        wxLogMessage(_T("o-charts_pi: doDownload: processing taskFile[%d], ptr=%p"), i, targetSlot->taskFileList[i]);
+        wxLog::FlushActive();
         // Is server substituting a base file instead of multiple update files/
         bool bsubBase = targetSlot->taskFileList[i]->bsubBase;
 
@@ -3617,10 +3640,17 @@ int doDownload(itemChart *targetChart, itemSlot *targetSlot)
     gtargetSlot->idlQueue = 0;
     gtargetChart = targetChart;
 
+    wxLogMessage(_T("o-charts_pi: doDownload queue built, %d items"), (int)targetSlot->dlQueue.size());
+    wxLog::FlushActive();
+
     //Send an event to kick off the download chain
+    wxLogMessage(_T("o-charts_pi: doDownload: sending install chain event, g_shopPanel=%p"), g_shopPanel);
+    wxLog::FlushActive();
     wxCommandEvent event(wxEVT_COMMAND_BUTTON_CLICKED);
     event.SetId( ID_CMD_BUTTON_INSTALL_CHAIN );
     g_shopPanel->GetEventHandler()->AddPendingEvent(event);
+    wxLogMessage(_T("o-charts_pi: doDownload: event sent, returning"));
+    wxLog::FlushActive();
 
     return 0;
 }
@@ -6134,8 +6164,12 @@ wxString ChooseInstallDir(wxString wk_installDir)
 
 void shopPanel::OnButtonInstallChain( wxCommandEvent& event )
 {
+    wxLogMessage(_T("o-charts_pi: OnButtonInstallChain entry, idlQueue=%d, dlQueue.size=%d"),
+        (int)gtargetSlot->idlQueue, (int)gtargetSlot->dlQueue.size());
+    wxLog::FlushActive();
+
     // Chained through from download end event
-    
+
     if(m_bAbortingDownload){
         m_bAbortingDownload = false;
         if (g_dpDownloadCompleteCallback)
@@ -6186,11 +6220,14 @@ void shopPanel::OnButtonInstallChain( wxCommandEvent& event )
 
 
 #ifdef __OCPN_USE_CURL__
+        wxLogMessage(_T("o-charts_pi: Starting CURL download, queue index=%d, url=%s"),
+            (int)gtargetSlot->idlQueue, gtargetSlot->dlQueue[gtargetSlot->idlQueue].url.c_str());
+        wxLogMessage(_T("o-charts_pi: localFile=%s"), gtargetSlot->dlQueue[gtargetSlot->idlQueue].localFile.c_str());
         g_curlDownloadThread = new wxCurlDownloadThread(g_CurlEventHandler, gtargetSlot->idlQueue);
         downloadOutStream = new wxFFileOutputStream(gtargetSlot->dlQueue[gtargetSlot->idlQueue].localFile);
         g_curlDownloadThread->SetURL(gtargetSlot->dlQueue[gtargetSlot->idlQueue].url);
         g_curlDownloadThread->SetOutputStream(downloadOutStream);
-        //wxLogMessage(_T("Downloading: ") + gtargetSlot->dlQueue[gtargetSlot->idlQueue].url);
+        wxLogMessage(_T("o-charts_pi: Calling Download()"));
         g_curlDownloadThread->Download();
 #else
         if(!m_bconnected){
@@ -6550,6 +6587,8 @@ void shopPanel::OnButtonInstall(itemChart* chart)
     }
     else{
         int res2 = doUploadXFPR( false );
+        wxLogMessage(_T("o-charts_pi: doUploadXFPR returned %d"), res2);
+        wxLog::FlushActive();
         if( res2 != 0){
             if(res2 < 200)
                 g_systemName.Clear();
@@ -6564,6 +6603,8 @@ void shopPanel::OnButtonInstall(itemChart* chart)
         }
     }
 
+    wxLogMessage(_T("o-charts_pi: checking assignment, g_systemName=%s"), g_systemName.c_str());
+    wxLog::FlushActive();
     int qtyIndex = -1;
 
     //  Check if I am already assigned to this chart
@@ -6577,6 +6618,9 @@ void shopPanel::OnButtonInstall(itemChart* chart)
             bNeedAssign = true;
     }
 
+    wxLogMessage(_T("o-charts_pi: bNeedAssign=%d bUseDongle=%d quantityList.size=%d maxSlots=%d"),
+        (int)bNeedAssign, (int)bUseDongle, (int)chart->quantityList.size(), (int)chart->maxSlots);
+    wxLog::FlushActive();
 
     if(bNeedAssign){
 
@@ -6600,11 +6644,13 @@ void shopPanel::OnButtonInstall(itemChart* chart)
         //Try to assign to dongle first.....
         int assignResult;
 
+        wxLogMessage(_T("o-charts_pi: doAssign qtyIndex=%d"), qtyIndex);
         if(bUseDongle)
             assignResult = doAssign(chart, qtyIndex, g_dongleName);
         else
             assignResult = doAssign(chart, qtyIndex, g_systemName);
 
+        wxLogMessage(_T("o-charts_pi: doAssign returned %d"), assignResult);
         if(assignResult != 0){
             wxLogMessage(_T("oeRNC Error: Slot doAssign()."));
             /*ClearChartOverrideStatus();
@@ -6622,7 +6668,11 @@ void shopPanel::OnButtonInstall(itemChart* chart)
     // Known assigned to me, so maybe Ready for download
 
     // Get the slot target
+    wxLogMessage(_T("o-charts_pi: GetActiveSlot m_activeQtyID=%d m_assignedSlotIndex=%d"), chart->m_activeQtyID, chart->m_assignedSlotIndex);
+    wxLog::FlushActive();
     itemSlot *activeSlot = chart->GetActiveSlot();
+    wxLogMessage(_T("o-charts_pi: GetActiveSlot returned %p"), activeSlot);
+    wxLog::FlushActive();
     if(!activeSlot){
         wxLogMessage(_T("oeRNC Error: active slot not defined."));
         //UpdateActionControls();
@@ -6630,17 +6680,25 @@ void shopPanel::OnButtonInstall(itemChart* chart)
     }
 
     // Slot is known, now determine what edition to request
+    wxLogMessage(_T("o-charts_pi: ComputeUpdates"));
+    wxLog::FlushActive();
     ComputeUpdates(chart, activeSlot);
+    wxLogMessage(_T("o-charts_pi: ComputeUpdates returned"));
+    wxLog::FlushActive();
 
     bool bNeedRequestWait = true;
 
     int request_return;
     if(bNeedRequestWait){
 
+        wxLogMessage(_T("o-charts_pi: doPrepareGUI"));
+        wxLog::FlushActive();
         ::wxBeginBusyCursor();
         request_return = doPrepareGUI(chart, activeSlot);
         ::wxEndBusyCursor();
 
+        wxLogMessage(_T("o-charts_pi: doPrepareGUI returned %d"), request_return);
+        wxLog::FlushActive();
         if(request_return != 0){
             /*if(g_ipGauge)
                 g_ipGauge->Stop();*/
@@ -6657,9 +6715,9 @@ void shopPanel::OnButtonInstall(itemChart* chart)
         }
     }
 
+    wxLogMessage(_T("o-charts_pi: doDownloadGui starting, taskFileList size=%d"), (int)activeSlot->taskFileList.size());
+    wxLog::FlushActive();
     doDownloadGui(chart, activeSlot);
-
-
 
     return;
 }
@@ -6758,7 +6816,6 @@ int shopPanel::doDownloadGui(itemChart *targetChart, itemSlot* targetSlot)
 
     m_binstallChain = true;
     m_bAbortingDownload = false;
-
     doDownload(targetChart, targetSlot);
     return 0;
 

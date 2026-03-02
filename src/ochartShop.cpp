@@ -7162,12 +7162,19 @@ wxString GetTPMFromFPR() {
         if (off1 != wxNOT_FOUND) {
              wxString c1 = stringFPR.Mid(off1 + 12);
              if (c1.StartsWith("Capable")) {
-                return stringFPR.Mid(off1 + 25, 40);
-             } else
+                wxString tpmId = stringFPR.Mid(off1 + 25, 40);
+                wxLogMessage("o-charts_pi: TPM ID found: %s", tpmId);
+                return tpmId;
+             } else {
+                wxLogMessage("o-charts_pi: TPM present but not capable");
                 return "";
-        } else
+             }
+        } else {
+             wxLogMessage("o-charts_pi: No TWID tag found in FPR");
              return "";
+        }
     }
+    wxLogMessage("o-charts_pi: FPR file empty or missing, no TPM ID available");
     return "";
 }
 
@@ -7210,13 +7217,29 @@ wxString shopPanel::doGetNewSystemName( )
 {
     wxString sName;
 
-    // Craft a reaonable system name from TPM for MFD
+    // Craft a reasonable system name from TPM for MFD
     wxString tpm = GetTPMFromFPR();
-    printf("TPM: %s\n", tpm.ToStdString().c_str());
-    std::string tpm_hash = hash9_hex(tpm.ToStdString());
+    std::string hashInput = tpm.ToStdString();
+
+    if (hashInput.empty()) {
+        // Fallback: use /etc/machine-id as unique device identifier
+        std::ifstream midFile("/etc/machine-id");
+        if (midFile.is_open()) {
+            std::string machineId;
+            std::getline(midFile, machineId);
+            if (!machineId.empty()) {
+                hashInput = machineId;
+                wxLogMessage("o-charts_pi: Using /etc/machine-id as fallback for system name");
+            }
+        }
+        if (hashInput.empty()) {
+            wxLogMessage("o-charts_pi: WARNING: No TPM and no machine-id, system name will not be unique");
+        }
+    }
+
+    std::string hash = hash9_hex(hashInput);
     sName = "DPMFD";
-    sName += tpm_hash;
-    printf("systemName: %s\n", sName.ToStdString().c_str());
+    sName += hash;
 
 #if 0       // Not MFD
 

@@ -33,6 +33,7 @@ public:
     virtual bool IsServiceAvailable();
     virtual void SyncWithService();
     virtual wxDateTime GetLastSyncTime();
+    virtual wxString GetSystemName();
 private:
     std::vector<DpOchartsChartInfo> GetCharts();
     shopPanel* EnsureShopPanel();

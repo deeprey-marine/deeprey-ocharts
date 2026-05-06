@@ -8,6 +8,7 @@ extern wxString g_dpMessage;
 extern std::vector<itemChart*> ChartVector;
 extern wxString                        g_loginUser;
 extern wxString                        g_loginKey;
+extern wxString                        g_systemName;
 extern itemChart* gtargetChart;
 extern shopPanel *g_shopPanel;
 
@@ -165,3 +166,4 @@ bool DpOchartsAPI::ResumeDownload(const wxString& chartId){ return false; }
 bool DpOchartsAPI::IsServiceAvailable(){ return false; }
 void DpOchartsAPI::SyncWithService(){ }
 wxDateTime DpOchartsAPI::GetLastSyncTime() { return wxDateTime(); }
+wxString DpOchartsAPI::GetSystemName() { return g_systemName; }

@@ -72,6 +72,23 @@ std::vector<DpOchartsChartInfo> DpOchartsAPI::ConvertChartVector() {
         dpChart.version = chart->serverChartEdition;
         int status = chart->getChartStatus();
         itemSlot* slot = chart->GetActiveSlot();
+
+        // STAT_EXPIRED short-circuits getChartStatus() before m_assignedSlotIndex
+        // is set, so GetActiveSlot() returns null and the previously-installed
+        // edition would be lost. Recover it for this device only.
+        if (!slot && status == STAT_EXPIRED) {
+            int qId = -1;
+            int slotIdx = chart->GetSlotAssignedToInstalledDongle(qId);
+            if (slotIdx < 0) slotIdx = chart->GetSlotAssignedToSystem(qId);
+            if (slotIdx >= 0) {
+                int qtyIdx = chart->FindQuantityIndex(qId);
+                if (qtyIdx >= 0 &&
+                    slotIdx < (int)chart->quantityList[qtyIdx].slotList.size()) {
+                    slot = chart->quantityList[qtyIdx].slotList[slotIdx];
+                }
+            }
+        }
+
         dpChart.installedVersion = slot ? wxString(slot->installedEdition) : wxString();
         wxString::const_iterator dummy;
         dpChart.expiryDate.ParseFormat(chart->expDate, "%Y-%m-%d %H:%M:%S", &dummy);

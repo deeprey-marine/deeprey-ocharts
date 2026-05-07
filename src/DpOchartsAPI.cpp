@@ -95,7 +95,7 @@ std::vector<DpOchartsChartInfo> DpOchartsAPI::ConvertChartVector() {
 
         static const std::map<int, DpChartStatus> statusToDpStatus = {
             { STAT_EXPIRED, DpChartStatus::EXPIRED },
-            { STAT_PURCHASED_NOSLOT, DpChartStatus::AVAILABLE },
+            { STAT_PURCHASED_NOSLOT, DpChartStatus::FULLY_ASSIGNED },
             { STAT_PURCHASED, DpChartStatus::AVAILABLE },
             { STAT_REQUESTABLE, DpChartStatus::AVAILABLE },
             { STAT_CURRENT, DpChartStatus::INSTALLED },
@@ -103,6 +103,7 @@ std::vector<DpOchartsChartInfo> DpOchartsAPI::ConvertChartVector() {
         };
         auto it = statusToDpStatus.find(status);
         dpChart.status = it == statusToDpStatus.end() ? DpChartStatus::CHART_ERROR : it->second;
+        dpChart.slotsTotal = (int)(chart->quantityList.size() * chart->maxSlots);
         dpChart.sizeBytes = 0;
 
         if (slot)
@@ -240,3 +241,4 @@ bool DpOchartsAPI::IsServiceAvailable(){ return false; }
 void DpOchartsAPI::SyncWithService(){ }
 wxDateTime DpOchartsAPI::GetLastSyncTime() { return wxDateTime(); }
 wxString DpOchartsAPI::GetSystemName() { return g_systemName; }
+wxString DpOchartsAPI::GetDongleName() { return g_dongleName; }

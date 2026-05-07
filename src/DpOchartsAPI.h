@@ -36,6 +36,7 @@ public:
     virtual void SyncWithService();
     virtual wxDateTime GetLastSyncTime();
     virtual wxString GetSystemName();
+    virtual wxString GetDongleName() override;
 private:
     std::vector<DpOchartsChartInfo> GetCharts();
     // Build DpOchartsChartInfo entries from the legacy ChartVector. MUST be

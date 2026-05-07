@@ -1,7 +1,9 @@
 #include "DpOchartsAPI.h"
 #include "ochartShop.h"
 #include "ocpn_plugin.h"
+#include "fpr.h"
 #include <map>
+#include <thread>
 
 int doLogin( /*wxWindow *parent*/ wxString dpLogin, wxString dpPass);
 extern wxString g_dpMessage;
@@ -9,6 +11,8 @@ extern std::vector<itemChart*> ChartVector;
 extern wxString                        g_loginUser;
 extern wxString                        g_loginKey;
 extern wxString                        g_systemName;
+extern wxString                        g_dongleName;
+extern bool                            g_chartListUpdatedOK;
 extern itemChart* gtargetChart;
 extern shopPanel *g_shopPanel;
 
@@ -51,16 +55,19 @@ std::vector<DpOchartsChartInfo> DpOchartsAPI::GetAvailableCharts() {
 
 std::vector<DpOchartsChartInfo> DpOchartsAPI::GetCharts() {
     g_dpMessage = wxEmptyString;
-    bool ok = shopPanel::OnButtonUpdate();
+    shopPanel::OnButtonUpdate();
     m_lastError = g_dpMessage.Trim(false);
+    return ConvertChartVector();
+}
 
+std::vector<DpOchartsChartInfo> DpOchartsAPI::ConvertChartVector() {
     std::vector<DpOchartsChartInfo> result;
     for (itemChart* chart : ChartVector)
     {
         DpOchartsChartInfo dpChart;
 
         dpChart.id = chart->chartID;
-        dpChart.orderRef = chart->orderRef;        
+        dpChart.orderRef = chart->orderRef;
         dpChart.name = chart->chartName;
         dpChart.version = chart->serverChartEdition;
         int status = chart->getChartStatus();
@@ -68,7 +75,7 @@ std::vector<DpOchartsChartInfo> DpOchartsAPI::GetCharts() {
         dpChart.installedVersion = slot ? wxString(slot->installedEdition) : wxString();
         wxString::const_iterator dummy;
         dpChart.expiryDate.ParseFormat(chart->expDate, "%Y-%m-%d %H:%M:%S", &dummy);
-        
+
         static const std::map<int, DpChartStatus> statusToDpStatus = {
             { STAT_EXPIRED, DpChartStatus::EXPIRED },
             { STAT_PURCHASED_NOSLOT, DpChartStatus::AVAILABLE },
@@ -80,7 +87,7 @@ std::vector<DpOchartsChartInfo> DpOchartsAPI::GetCharts() {
         auto it = statusToDpStatus.find(status);
         dpChart.status = it == statusToDpStatus.end() ? DpChartStatus::CHART_ERROR : it->second;
         dpChart.sizeBytes = 0;
-       
+
         if (slot)
         {
             for (itemTaskFileInfo* fileInfo : slot->taskFileList)
@@ -92,25 +99,74 @@ std::vector<DpOchartsChartInfo> DpOchartsAPI::GetCharts() {
         }
         dpChart.description = chart->chartName;
         dpChart.region = chart->chartID;
-        dpChart.thumbnailPath = wxEmptyString; // what is this for ?                
+        dpChart.thumbnailPath = wxEmptyString;
         wxString editionDateStr(chart->editionDate);
         unsigned long long editionDateULL;
         if (editionDateStr.ToULongLong(&editionDateULL))
             dpChart.lastModified = wxDateTime((time_t)editionDateULL);
         dpChart.downloadPercent = 0;
         dpChart.previewBitmap = chart->GetChartThumbnail(100, true);
-        
+
         for (itemQuantity& Qty: chart->quantityList) {
             for (itemSlot* slot : Qty.slotList) {
-                wxString assignment = chart->getKeytypeString(slot->slotUuid) + 
+                wxString assignment = chart->getKeytypeString(slot->slotUuid) +
                     _T("    ") + wxString(slot->assignedSystemName.c_str());
                 dpChart.assigments.push_back(assignment);
             }
-        }    
+        }
 
         result.push_back(dpChart);
     }
     return result;
+}
+
+// Async chart-list fetch.
+//
+// The legacy shopPanel::OnButtonUpdate() can't run as a whole on a worker
+// thread: it calls IsDongleAvailable() which uses wxExecute() (not thread-safe
+// — wxExecute touches GTK signal handlers and wxAppTraits in the main loop)
+// and GetShopNameFromFPR() which can pop an error dialog. We split it:
+//
+//   1. Main thread: dongle / FPR detection (fast, <100ms typically).
+//   2. Worker thread: getChartList() — the actual ~10s HTTP POST. This path is
+//      pure libcurl + data parsing; checkResult/checkResponseCode have all
+//      their wxMessageBox calls commented out, so it's thread-safe.
+//   3. Main thread (via wxTheApp->CallAfter): ConvertChartVector() builds
+//      wxBitmap thumbnails (not thread-safe), then invoke caller's callback.
+extern int getChartList(bool bShowErrorDialogs);
+
+void DpOchartsAPI::GetAvailableChartsAsync(ChartsCallback onComplete) {
+    g_dpMessage = wxEmptyString;
+
+    // Step 1 — main thread: replicate the prep that shopPanel::OnButtonUpdate
+    // does before the network call. We can't call OnButtonUpdate() itself from
+    // a worker thread because of IsDongleAvailable()/wxExecute().
+    if (g_loginKey.Len() == 0) {
+        // Not authenticated — nothing to fetch.
+        if (onComplete) onComplete({});
+        return;
+    }
+
+    g_dongleName.Clear();
+    if (IsDongleAvailable()) {
+        g_dongleName = shopPanel::GetDongleName();
+    } else if (!g_systemName.Length()) {
+        shopPanel::GetShopNameFromFPR();
+    }
+
+    // Step 2 — worker thread: HTTP POST.
+    std::thread([this, onComplete]() {
+        int err_code = getChartList(false);
+        g_chartListUpdatedOK = (err_code == 0);
+
+        // Step 3 — back on UI thread: build DpOchartsChartInfo (with wxBitmaps)
+        // and invoke the caller.
+        wxTheApp->CallAfter([this, onComplete]() {
+            m_lastError = g_dpMessage.Trim(false);
+            std::vector<DpOchartsChartInfo> charts = ConvertChartVector();
+            if (onComplete) onComplete(charts);
+        });
+    }).detach();
 }
 
 std::vector<DpOchartsChartInfo> DpOchartsAPI::GetInstalledCharts(){

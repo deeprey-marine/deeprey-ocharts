@@ -14,6 +14,8 @@ public:
     virtual std::vector<DpOchartsChartInfo> GetAvailableCharts();
     virtual std::vector<DpOchartsChartInfo> GetInstalledCharts();
 
+    virtual void GetAvailableChartsAsync(ChartsCallback onComplete) override;
+
     using ProgressCallback = std::function<void(int percent)>;
     using CompleteCallback = std::function<void(bool success, const wxString& error)>;
 
@@ -36,6 +38,9 @@ public:
     virtual wxString GetSystemName();
 private:
     std::vector<DpOchartsChartInfo> GetCharts();
+    // Build DpOchartsChartInfo entries from the legacy ChartVector. MUST be
+    // called on the UI thread — it constructs wxBitmap thumbnails.
+    std::vector<DpOchartsChartInfo> ConvertChartVector();
     shopPanel* EnsureShopPanel();
     wxString m_lastError;
     shopPanel* m_shoppanel;

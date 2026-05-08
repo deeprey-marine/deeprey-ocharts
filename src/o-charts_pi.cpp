@@ -764,6 +764,13 @@ int o_charts_pi::Init(void)
 #endif
     // Android handled in Java-side interface
 
+    // Seed ChartVector with persisted slot state (incl. installedEdition) so
+    // the GUI's chart-list refresh has something to merge server slots into.
+    extern void loadShopConfig();
+    wxString preservedSystemName = g_systemName;
+    loadShopConfig();
+    if (!preservedSystemName.IsEmpty()) g_systemName = preservedSystemName;
+
     m_ochartsAPI = new DpOchartsAPI();
 
     return flags;

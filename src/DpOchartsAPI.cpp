@@ -2,6 +2,7 @@
 #include "ochartShop.h"
 #include "ocpn_plugin.h"
 #include "fpr.h"
+#include <wx/fileconf.h>
 #include <map>
 #include <thread>
 
@@ -18,6 +19,10 @@ extern shopPanel *g_shopPanel;
 
 extern std::function<void(int percent)> g_dpDownloadProgressCallback;
 extern std::function<void(bool success, const wxString& error)> g_dpDownloadCompleteCallback;
+
+extern wxArrayString g_systemNameChoiceArray;
+extern wxArrayString g_systemNameServerArray;
+extern wxArrayString g_systemNameDisabledArray;
 
 DpOchartsAPI::DpOchartsAPI() :m_shoppanel(nullptr), m_hiddenFrame(nullptr) {}
 void DpOchartsAPI::SetShopPanel(shopPanel* shoppanel) { m_shoppanel = shoppanel; }
@@ -47,7 +52,43 @@ bool DpOchartsAPI::ValidateStoredCredentials(const wxString& username, const wxS
     g_loginKey = loginKey;
     return !username.empty() && !loginKey.empty();
 }
-void DpOchartsAPI::Logout(){ }
+void DpOchartsAPI::Logout() {
+    // Abort any in-flight download; reuses curl-thread cancellation.
+    if (shopPanel* panel = EnsureShopPanel())
+        panel->OnButtonCancelOp();
+
+    // Sever download callbacks before freeing chart data they may reference.
+    g_dpDownloadProgressCallback = nullptr;
+    g_dpDownloadCompleteCallback = nullptr;
+
+    // gtargetChart is a raw pointer into ChartVector; null it before deleting items.
+    gtargetChart = nullptr;
+    for (itemChart* c : ChartVector) delete c;
+    ChartVector.clear();
+
+    // Session globals.
+    g_loginUser.Clear();
+    g_loginKey.Clear();
+    g_systemName.Clear();
+    g_dongleName.Clear();
+    g_dpMessage.Clear();
+    g_chartListUpdatedOK = false;
+
+    // System-name lists are repopulated by the next getChartList/ProcessResponse.
+    g_systemNameChoiceArray.Clear();
+    g_systemNameServerArray.Clear();
+    g_systemNameDisabledArray.Clear();
+
+    m_lastError.Clear();
+
+    // Wipe the persisted login key only; loadShopConfig() reads this on startup
+    // and would otherwise silently re-authenticate the previous user.
+    if (wxFileConfig* pConf = GetOCPNConfigObject()) {
+        pConf->SetPath(_T("/PlugIns/ocharts"));
+        pConf->DeleteEntry(_T("loginKey"));
+        pConf->Flush();
+    }
+}
 
 std::vector<DpOchartsChartInfo> DpOchartsAPI::GetAvailableCharts() {
     return GetCharts();

@@ -24,6 +24,7 @@ public:
         CompleteCallback onComplete);
 
     virtual bool CancelDownload(const wxString& chartId);
+    virtual void UninstallChart(const wxString& chartId, UninstallCallback onComplete) override;
     virtual bool IsDownloading(const wxString& chartId);
     virtual wxString GetLastError() const;
 

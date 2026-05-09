@@ -3,6 +3,8 @@
 #include "ocpn_plugin.h"
 #include "fpr.h"
 #include <wx/fileconf.h>
+#include <wx/dir.h>
+#include <wx/filename.h>
 #include <map>
 #include <thread>
 
@@ -19,6 +21,9 @@ extern shopPanel *g_shopPanel;
 
 extern std::function<void(int percent)> g_dpDownloadProgressCallback;
 extern std::function<void(bool success, const wxString& error)> g_dpDownloadCompleteCallback;
+
+extern bool g_benableRebuild;
+void saveShopConfig();
 
 extern wxArrayString g_systemNameChoiceArray;
 extern wxArrayString g_systemNameServerArray;
@@ -236,6 +241,75 @@ std::vector<DpOchartsChartInfo> DpOchartsAPI::GetInstalledCharts(){
     return result;
 }
 
+// Pick the installable ChartVector entry for a given chartID.
+//
+// chartID identifies the chart product, not an individual order. A user who
+// has bought the same product twice (e.g. last year's edition + this year's)
+// ends up with two ChartVector entries sharing the chartID. A naive
+// first-match loop will pick whichever the server returned first, which is
+// typically the older fully-assigned order — install then fails with
+// "no free slot" even though the user clicked the new order's card.
+//
+// Preference order:
+//   1. Already assigned to this MFD's dongle / systemName (re-install path).
+//   2. Has at least one free slot in some quantity (new assignment can succeed).
+//   3. Fallback: first match (download proceeds and fails downstream with a
+//      meaningful error).
+static itemChart* selectChartForOp(const wxString& chartId, bool requireAssignedHere)
+{
+    itemChart* assigned = nullptr;
+    itemChart* withFreeSlot = nullptr;
+    itemChart* firstMatch = nullptr;
+    int matchCount = 0;
+
+    for (itemChart* c : ChartVector) {
+        if (!c || c->chartID != chartId) continue;
+        matchCount++;
+        if (!firstMatch) firstMatch = c;
+
+        bool isAssignedHere = false;
+        if (g_dongleName.Length() && c->isChartsetAssignedToSystemKey(g_dongleName))
+            isAssignedHere = true;
+        if (!isAssignedHere && g_systemName.Length() &&
+            c->isChartsetAssignedToSystemKey(g_systemName))
+            isAssignedHere = true;
+        if (isAssignedHere) {
+            assigned = c;
+            break;
+        }
+
+        if (!withFreeSlot) {
+            for (itemQuantity& Q : c->quantityList) {
+                unsigned int realAssigned = 0;
+                for (itemSlot* s : Q.slotList) {
+                    if (s && (strlen(s->slotUuid.c_str()) ||
+                              strlen(s->assignedSystemName.c_str())))
+                        realAssigned++;
+                }
+                if (realAssigned < c->maxSlots) {
+                    withFreeSlot = c;
+                    break;
+                }
+            }
+        }
+    }
+
+    itemChart* chosen =
+        assigned ? assigned : (requireAssignedHere ? nullptr :
+                              (withFreeSlot ? withFreeSlot : firstMatch));
+
+    if (matchCount > 1) {
+        wxLogMessage(_T("o-charts_pi: chartID=%s has %d entries; chose orderRef=%s reason=%s"),
+            wxString(chartId), matchCount,
+            chosen ? wxString(chosen->orderRef) : wxString("<none>"),
+            assigned ? _T("assigned-to-this-device") :
+            (withFreeSlot && chosen == withFreeSlot ? _T("has-free-slot") :
+            (chosen ? _T("fallback-first-match") : _T("none-eligible"))));
+        wxLog::FlushActive();
+    }
+    return chosen;
+}
+
 void DpOchartsAPI::DownloadChart(const wxString& chartId,
     ProgressCallback onProgress,
     CompleteCallback onComplete){
@@ -244,32 +318,104 @@ void DpOchartsAPI::DownloadChart(const wxString& chartId,
         if(onComplete) onComplete(false, _("Shop panel not available"));
         return;
     }
-    for (itemChart* chart : ChartVector)
-    {
-        if (chart->chartID == chartId)
-        {
-            g_dpDownloadProgressCallback = onProgress;
-            g_dpDownloadCompleteCallback = onComplete;
-            g_dpMessage = wxEmptyString;
-            panel->OnButtonInstall(chart);
-            break;
-        }
+
+    itemChart* chart = selectChartForOp(chartId, /*requireAssignedHere=*/false);
+    if (!chart) {
+        if (onComplete) onComplete(false, _("Chart not found"));
+        return;
     }
+
+    g_dpDownloadProgressCallback = onProgress;
+    g_dpDownloadCompleteCallback = onComplete;
+    g_dpMessage = wxEmptyString;
+    panel->OnButtonInstall(chart);
 }
 
 bool DpOchartsAPI::CancelDownload(const wxString& chartId){
     shopPanel* panel = EnsureShopPanel();
     if(!panel) return false;
-    if (gtargetChart->chartID == chartId)
-    {
-        panel->OnButtonCancelOp();
-        return true;
+
+    // Match against ChartVector instead of dereferencing gtargetChart: the
+    // global is null until doDownload runs, and stale across sessions if a
+    // prior install flow returned before doDownload was reached. Touching it
+    // unconditionally segfaults on the cancel-while-stuck path.
+    itemChart* chart = nullptr;
+    for (itemChart* c : ChartVector) {
+        if (c->chartID == chartId) { chart = c; break; }
     }
-    else
-    {
-        return false;
-    }
+    if (!chart) return false;
+
+    panel->OnButtonCancelOp();
+    return true;
 }
+void DpOchartsAPI::UninstallChart(const wxString& chartId, UninstallCallback onComplete) {
+    g_dpMessage = wxEmptyString;
+    m_lastError.Clear();
+
+    // Same disambiguation as DownloadChart: with two orders for one chartID,
+    // the entry assigned to this device is the only correct one to uninstall.
+    itemChart* chart = selectChartForOp(chartId, /*requireAssignedHere=*/true);
+    if (!chart) {
+        if (onComplete) onComplete(false, _("Chart not installed on this device"));
+        return;
+    }
+
+    if (chart->m_downloading ||
+        (gtargetChart && gtargetChart->chartID == chart->chartID)) {
+        if (onComplete) onComplete(false, _("Download in progress — cancel it first"));
+        return;
+    }
+
+    int qId = -1;
+    int slotIdx = chart->GetSlotAssignedToInstalledDongle(qId);
+    if (slotIdx < 0) slotIdx = chart->GetSlotAssignedToSystem(qId);
+    if (slotIdx < 0) {
+        if (onComplete) onComplete(false, _("No slot assigned to this device"));
+        return;
+    }
+    int qtyIdx = chart->FindQuantityIndex(qId);
+    if (qtyIdx < 0 || slotIdx >= (int)chart->quantityList[qtyIdx].slotList.size()) {
+        if (onComplete) onComplete(false, _("Slot lookup failed"));
+        return;
+    }
+    itemSlot* slot = chart->quantityList[qtyIdx].slotList[slotIdx];
+    if (!slot) {
+        if (onComplete) onComplete(false, _("Slot lookup failed"));
+        return;
+    }
+
+    if (slot->installedEdition.empty() && slot->chartDirName.empty()) {
+        if (onComplete) onComplete(false, _("Chart is not installed on this device"));
+        return;
+    }
+
+    // Wipe install directory for this slot. Other slots / chartsets under the
+    // same installLocation parent are untouched.
+    if (!slot->installLocation.empty() && !slot->chartDirName.empty()) {
+        wxString installDir = wxString(slot->installLocation.c_str()) +
+                              wxFileName::GetPathSeparator() +
+                              wxString(slot->chartDirName.c_str());
+        if (wxDir::Exists(installDir)) {
+            wxFileName::Rmdir(installDir, wxPATH_RMDIR_RECURSIVE);
+        }
+    }
+
+    // Clear local-install state. The slot remains assigned to this device
+    // server-side (assignedSystemName preserved), so re-download skips
+    // reassignment. Next getChartStatus() will report STAT_REQUESTABLE
+    // (or STAT_EXPIRED if applicable).
+    slot->installedEdition.clear();
+    slot->installLocation.clear();
+    slot->chartDirName.clear();
+
+    saveShopConfig();
+
+    if (g_benableRebuild) ForceChartDBUpdate();
+    RequestRefresh(GetOCPNCanvasWindow());
+
+    if (onComplete) onComplete(true, wxEmptyString);
+}
+
 bool DpOchartsAPI::IsDownloading(const wxString& chartId){ return false; }
 wxString DpOchartsAPI::GetLastError() const { return m_lastError; }
 

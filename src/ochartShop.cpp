@@ -6486,6 +6486,28 @@ void shopPanel::OnButtonInstallChain( wxCommandEvent& event )
     }
 }
 
+// Notify a deeprey-gui (or any IDpOchartsAPI consumer) that an install attempt
+// failed before reaching the curl-download phase. OnButtonInstall historically
+// returned silently on every error, leaving the caller's UI stuck in
+// "downloading" forever. Fold any text already accumulated in g_dpMessage
+// (typically from checkResult) into the surfaced error, then clear callbacks
+// so a later install_chain dispatch can't double-fire.
+static void notifyInstallFailure(const wxString& reason)
+{
+    wxString msg = reason;
+    wxString existing = g_dpMessage;
+    existing.Trim(false).Trim(true);
+    if (existing.Length()) {
+        if (msg.Length()) msg += " — ";
+        msg += existing;
+    }
+    if (!g_dpDownloadCompleteCallback) return;
+    auto cb = g_dpDownloadCompleteCallback;
+    g_dpDownloadCompleteCallback = nullptr;
+    g_dpDownloadProgressCallback = nullptr;
+    cb(false, msg);
+}
+
 void shopPanel::OnButtonInstall(wxCommandEvent& event)
 {
     itemChart* chart = m_ChartPanelSelected->GetSelectedChart();
@@ -6502,8 +6524,10 @@ void shopPanel::OnButtonInstall(itemChart* chart)
     //SetErrorMessage();
 
     //  System name is required to install
-    if (!GetAndValidateSystemName())
+    if (!GetAndValidateSystemName()) {
+        notifyInstallFailure(_("System name is missing or invalid"));
         return;
+    }
 
     //SetChartOverrideStatus( _("Installing...") );
 
@@ -6558,6 +6582,7 @@ void shopPanel::OnButtonInstall(itemChart* chart)
                 saveShopConfig();       // record blank system name.
                 //UpdateActionControls();
                 //RefreshSystemName();
+                notifyInstallFailure(_("Could not register a system name with the o-charts server"));
                 return;
             }
             selectedSystemName = g_systemName;
@@ -6582,6 +6607,7 @@ void shopPanel::OnButtonInstall(itemChart* chart)
             setStatusText( _("Status: Dongle FPR upload error"));
 
             UpdateActionControls();*/
+            notifyInstallFailure(_("Dongle FPR upload error"));
             return;
         }
     }
@@ -6599,6 +6625,7 @@ void shopPanel::OnButtonInstall(itemChart* chart)
 
             UpdateActionControls();*/
 
+            notifyInstallFailure(_("System FPR upload error"));
             return;
         }
     }
@@ -6625,20 +6652,32 @@ void shopPanel::OnButtonInstall(itemChart* chart)
     if(bNeedAssign){
 
         // Need assignment
-        // Choose the first available qty that has an available slot
+        // Choose the first qty with a free slot. The o-charts XML response
+        // emits a <slot> element for every slot in the quantity, including
+        // unassigned ones (slotUuid empty). Counting raw slotList.size() here
+        // treats those placeholders as "taken", leaves qtyIndex=-1 even on
+        // brand-new orders with all slots free, and we'd then call
+        // doAssign(chart, -1, ...) — chart->quantityList[-1] is UB and the
+        // server rejects with code 18. Match getChartAssignmentCount() and
+        // count only slots whose slotUuid is non-empty.
         for(unsigned int i=0 ; i < chart->quantityList.size() ; i++){
-            itemQuantity Qty = chart->quantityList[i];
-            if(Qty.slotList.size() < chart->maxSlots){
+            itemQuantity& Qty = chart->quantityList[i];
+            unsigned int realAssigned = 0;
+            for (itemSlot* s : Qty.slotList) {
+                if (s && strlen(s->slotUuid.c_str())) realAssigned++;
+            }
+            if(realAssigned < chart->maxSlots){
                 qtyIndex = i;
                 break;
             }
         }
 
-      /*  if(qtyIndex < 0){
-            wxLogMessage(_T("oeRNC Error: No available slot found for unassigned chart."));
-            UpdateActionControls();
+        if(qtyIndex < 0){
+            wxLogMessage(_T("o-charts_pi: No free slot for unassigned chart."));
+            notifyInstallFailure(_("All chart slots are already assigned to other devices. "
+                                   "Release a slot at o-charts.org first."));
             return;
-        }*/
+        }
 
         // Ready to assign.
         //Try to assign to dongle first.....
@@ -6655,6 +6694,7 @@ void shopPanel::OnButtonInstall(itemChart* chart)
             wxLogMessage(_T("oeRNC Error: Slot doAssign()."));
             /*ClearChartOverrideStatus();
             UpdateActionControls();*/
+            notifyInstallFailure(_("Chart assignment failed"));
             return;
         }
 
@@ -6676,6 +6716,7 @@ void shopPanel::OnButtonInstall(itemChart* chart)
     if(!activeSlot){
         wxLogMessage(_T("oeRNC Error: active slot not defined."));
         //UpdateActionControls();
+        notifyInstallFailure(_("Internal error: active chart slot not defined"));
         return;
     }
 
@@ -6711,6 +6752,7 @@ void shopPanel::OnButtonInstall(itemChart* chart)
             UpdateActionControls();*/
 
 
+            notifyInstallFailure(_("License key request failed"));
             return;
         }
     }
@@ -6839,6 +6881,17 @@ void shopPanel::OnButtonCancelOp()
         //g_ipGauge->Stop();
         //setStatusTextProgress(_T(""));
         m_binstallChain = true;
+    } else if (g_dpDownloadCompleteCallback) {
+        // Pre-curl phase: caller (e.g. deeprey-gui) thinks a download is in
+        // progress but no curl thread exists yet — either OnButtonInstall is
+        // still running synchronous prepare/assign HTTP calls, or it returned
+        // silently. We can't interrupt blocking HTTP from here, but firing
+        // the completion callback now unsticks the caller's UI. Clear the
+        // callback so any later install_chain dispatch can't double-fire.
+        auto cb = g_dpDownloadCompleteCallback;
+        g_dpDownloadCompleteCallback = nullptr;
+        g_dpDownloadProgressCallback = nullptr;
+        cb(false, _("Chart download cancelled."));
     }
 #else
     OCPN_cancelDownloadFileBackground(g_FileDownloadHandle);

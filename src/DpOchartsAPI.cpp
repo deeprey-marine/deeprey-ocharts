@@ -171,7 +171,7 @@ std::vector<DpOchartsChartInfo> DpOchartsAPI::ConvertChartVector() {
         if (editionDateStr.ToULongLong(&editionDateULL))
             dpChart.lastModified = wxDateTime((time_t)editionDateULL);
         dpChart.downloadPercent = 0;
-        dpChart.previewBitmap = chart->GetChartThumbnail(100, true);
+        dpChart.previewBitmap = chart->GetChartThumbnail(200, true);
 
         for (itemQuantity& Qty: chart->quantityList) {
             for (itemSlot* slot : Qty.slotList) {

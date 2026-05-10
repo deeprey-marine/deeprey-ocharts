@@ -1498,9 +1498,19 @@ bool o_charts_pi::LoadConfig( void )
 
             ChartSetEULA *cse = new ChartSetEULA;
             wxStringTokenizer tkz( kval, _T(";") );
-            wxString EULAShow = tkz.GetNextToken();        // oesencEULAShow, text
-            wxString EULAShown = tkz.GetNextToken();        // Has it been shown at least once?  1/0
-            wxString EULAFile = tkz.GetNextToken();
+            wxString EULAShow  = tkz.GetNextToken();   // policy: once / always / never
+            wxString EULAShown = tkz.GetNextToken();   // b_onceShown: 1/0
+            wxString tok3      = tkz.GetNextToken();   // legacy: fileName, new: b_sessionShown
+            wxString EULASessionShown;
+            wxString EULAFile;
+            if(tkz.HasMoreTokens()){
+                // New format: <policy>;<once>;<session>;<file>
+                EULASessionShown = tok3;
+                EULAFile         = tkz.GetNextToken();
+            } else {
+                // Legacy format: <policy>;<once>;<file>
+                EULAFile = tok3;
+            }
 
             cse->fileName = EULAFile;
 
@@ -1511,8 +1521,11 @@ bool o_charts_pi::LoadConfig( void )
             else
                 cse->npolicyShow = 0;
 
-            if(EULAShown ==_T("1"))
+            if(EULAShown == _T("1"))
                 cse->b_onceShown = true;
+
+            if(EULASessionShown == _T("1"))
+                cse->b_sessionShown = true;
 
             g_EULAArray.Add(cse);
 
@@ -1570,11 +1583,8 @@ bool o_charts_pi::SaveConfig( void )
                 EULAShow = _T("always");
 
             config_val += EULAShow + _T(";");
-            if(cse->b_onceShown)
-                config_val += _T("1;");
-            else
-                config_val += _T("0;");
-
+            config_val += (cse->b_onceShown    ? _T("1;") : _T("0;"));
+            config_val += (cse->b_sessionShown ? _T("1;") : _T("0;"));
             config_val += cse->fileName;
 
             wxString key;
@@ -5012,6 +5022,7 @@ bool processChartinfo(const wxString &oesenc_file, wxString status)
                         else{
                             CSE->b_sessionShown = true;
                             CSE->b_onceShown = true;
+                            if(g_pi) g_pi->SaveConfig();    // Persist acceptance immediately (crash-safe)
                         }
                     }
                 }
@@ -5137,20 +5148,28 @@ void processUserKeyHint(const wxString &oesenc_file)
 bool ShowAlwaysEULAs()
 {
     bool b_showResult = true;
+    bool b_anyAccepted = false;
 
     ChartSetEULA *CSE;
 
     for(unsigned int i=0 ; i < g_EULAArray.GetCount() ; i++){
         CSE = g_EULAArray.Item(i);
-        if(CSE->npolicyShow == 2){
+        if(CSE->npolicyShow == 2 && !CSE->b_sessionShown){
             wxString file = CSE->fileName;
             file.Replace('!', wxFileName::GetPathSeparator());
 
             b_showResult = ShowEULA(file);
             if(!b_showResult)
                 return false;
+
+            CSE->b_sessionShown = true;
+            CSE->b_onceShown    = true;
+            b_anyAccepted = true;
         }
     }
+
+    if(b_anyAccepted && g_pi)
+        g_pi->SaveConfig();   // Persist acceptance immediately (crash-safe)
 
     return true;
 }

@@ -23,6 +23,8 @@ extern std::function<void(int percent)> g_dpDownloadProgressCallback;
 extern std::function<void(bool success, const wxString& error)> g_dpDownloadCompleteCallback;
 
 extern bool g_benableRebuild;
+extern wxString g_PrivateDataDir;  // ~/.opencpn/o_charts_pi/, set in o-charts_pi.cpp
+extern wxFileConfig *g_pconfig;     // OpenCPN's config object, set in o-charts_pi.cpp
 void saveShopConfig();
 
 extern wxArrayString g_systemNameChoiceArray;
@@ -389,18 +391,50 @@ void DpOchartsAPI::UninstallChart(const wxString& chartId, UninstallCallback onC
         return;
     }
 
-    // Wipe install directory for this slot. Other slots / chartsets under the
-    // same installLocation parent are untouched.
-    if (!slot->installLocation.empty() && !slot->chartDirName.empty()) {
-        wxString installDir = wxString(slot->installLocation.c_str()) +
-                              wxFileName::GetPathSeparator() +
-                              wxString(slot->chartDirName.c_str());
-        if (wxDir::Exists(installDir)) {
-            wxFileName::Rmdir(installDir, wxPATH_RMDIR_RECURSIVE);
+    // Snapshot paths derived from slot state BEFORE we mutate it.
+    wxString installParent = wxString(slot->installLocation.c_str());
+    wxString installDir;
+    if (!installParent.IsEmpty() && !slot->chartDirName.empty()) {
+        installDir = installParent +
+                     wxFileName::GetPathSeparator() +
+                     wxString(slot->chartDirName.c_str());
+    }
+    wxString prefix = (chart->GetChartType() == CHART_TYPE_OEUSENC) ? "oeuSENC" : "oeRNC";
+    wxString chartIdStr(chart->chartID.c_str());
+    wxString editionYear = wxString(slot->installedEdition.c_str()).BeforeFirst('/');
+
+    // 1) Wipe install directory for this slot. Other slots / chartsets under
+    // the same installLocation parent are untouched.
+    if (!installDir.IsEmpty() && wxDir::Exists(installDir)) {
+        if (!wxFileName::Rmdir(installDir, wxPATH_RMDIR_RECURSIVE)) {
+            wxLogMessage("o-charts uninstall: partial Rmdir on %s", installDir);
         }
     }
 
-    // Clear local-install state. The slot remains assigned to this device
+    // 2) Wipe the DownloadCache directory for this edition. Path formula
+    // matches doDownload() at ochartShop.cpp:3613-3616 and scrubCache() at
+    // ochartShop.cpp:5331-5411.
+    wxString cacheRoot = g_PrivateDataDir + "DownloadCache" + wxFileName::GetPathSeparator();
+    if (!editionYear.IsEmpty()) {
+        wxString cacheDir = cacheRoot + prefix + "-" + chartIdStr + "-" + editionYear;
+        if (wxDir::Exists(cacheDir)) {
+            wxFileName::Rmdir(cacheDir, wxPATH_RMDIR_RECURSIVE);
+        }
+    } else {
+        // Slot state is partial — glob "<prefix>-<id>-*" and remove any match.
+        wxDir dcd(cacheRoot);
+        if (dcd.IsOpened()) {
+            wxString name;
+            wxString pattern = prefix + "-" + chartIdStr + "-*";
+            bool cont = dcd.GetFirst(&name, pattern, wxDIR_DIRS);
+            while (cont) {
+                wxFileName::Rmdir(cacheRoot + name, wxPATH_RMDIR_RECURSIVE);
+                cont = dcd.GetNext(&name);
+            }
+        }
+    }
+
+    // 3) Clear local-install state. The slot remains assigned to this device
     // server-side (assignedSystemName preserved), so re-download skips
     // reassignment. Next getChartStatus() will report STAT_REQUESTABLE
     // (or STAT_EXPIRED if applicable).
@@ -410,8 +444,59 @@ void DpOchartsAPI::UninstallChart(const wxString& chartId, UninstallCallback onC
 
     saveShopConfig();
 
-    if (g_benableRebuild) ForceChartDBUpdate();
-    RequestRefresh(GetOCPNCanvasWindow());
+    // 4) Force OpenCPN to rescan and rewrite chartlist.dat. Symmetric to
+    // install at ochartShop.cpp:6476-6480. ForceChartDBUpdate() alone is a
+    // no-op outside the open Options dialog (see ocpn_plugin_gui.cpp:1403).
+    //
+    // Two pitfalls solved here:
+    //   a) ChartDatabase::Update() at chartdbs.cpp:1811 REPLACES m_dir_array
+    //      with what we pass, and the result is persisted into chartlist.dat
+    //      (loaded back as m_dir_array on next OpenCPN start). So whatever we
+    //      pass is sticky across sessions until the next rebuild.
+    //   b) The install path's "covered" check at ochartShop.cpp:6427 uses
+    //      StartsWith() against m_dir_array. If a parent dir like
+    //      "/home/opencpn/Charts" sits in there, EVERY future install path
+    //      under it tests as covered, install skips its own
+    //      UpdateChartDBInplace, and the new charts never make it into
+    //      chartlist.dat — so they're invisible despite being on disk.
+    //
+    // Avoid both by building dirs from scratch:
+    //   - persistent ChartDirs straight from opencpn.conf (g_pconfig), not
+    //     GetChartDBDirArrayString() — that would inherit any prior pollution
+    //   - plus the per-chartset install dir of every still-installed slot
+    //     (the just-removed slot's state was cleared above so it's excluded)
+    wxArrayString dirs;
+    if (g_pconfig) {
+        wxString savedPath = g_pconfig->GetPath();
+        g_pconfig->SetPath("/ChartDirectories");
+        wxString key, value;
+        long index;
+        bool cont = g_pconfig->GetFirstEntry(key, index);
+        while (cont) {
+            if (g_pconfig->Read(key, &value) && !value.IsEmpty()) {
+                dirs.Add(value);
+            }
+            cont = g_pconfig->GetNextEntry(key, index);
+        }
+        g_pconfig->SetPath(savedPath);
+    }
+    for (size_t i = 0; i < ChartVector.size(); i++) {
+        itemChart* c = ChartVector[i];
+        if (!c) continue;
+        for (size_t qi = 0; qi < c->quantityList.size(); qi++) {
+            for (size_t si = 0; si < c->quantityList[qi].slotList.size(); si++) {
+                itemSlot* s = c->quantityList[qi].slotList[si];
+                if (!s || s->installLocation.empty() || s->chartDirName.empty())
+                    continue;
+                wxString chartDir = wxString(s->installLocation.c_str()) +
+                                    wxFileName::GetPathSeparator() +
+                                    wxString(s->chartDirName.c_str());
+                if (dirs.Index(chartDir) == wxNOT_FOUND)
+                    dirs.Add(chartDir);
+            }
+        }
+    }
+    UpdateChartDBInplace(dirs, /*b_force_update=*/true, /*b_ProgressDialog=*/false);
 
     if (onComplete) onComplete(true, wxEmptyString);
 }

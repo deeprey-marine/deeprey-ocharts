@@ -462,7 +462,11 @@ void DpOchartsAPI::UninstallChart(const wxString& chartId, UninstallCallback onC
     //
     // Avoid both by building dirs from scratch:
     //   - persistent ChartDirs straight from opencpn.conf (g_pconfig), not
-    //     GetChartDBDirArrayString() — that would inherit any prior pollution
+    //     GetChartDBDirArrayString() — that would inherit any prior pollution.
+    //     Entries are stored as "path^magic_number" (see navutil.cpp:1500), so
+    //     strip everything from '^' onward — otherwise the magic-suffixed path
+    //     fails wxDir::Exists() and the directory's charts (e.g. the basemap)
+    //     are silently dropped from chartlist.dat.
     //   - plus the per-chartset install dir of every still-installed slot
     //     (the just-removed slot's state was cleared above so it's excluded)
     wxArrayString dirs;
@@ -474,7 +478,7 @@ void DpOchartsAPI::UninstallChart(const wxString& chartId, UninstallCallback onC
         bool cont = g_pconfig->GetFirstEntry(key, index);
         while (cont) {
             if (g_pconfig->Read(key, &value) && !value.IsEmpty()) {
-                dirs.Add(value);
+                dirs.Add(value.BeforeFirst('^'));
             }
             cont = g_pconfig->GetNextEntry(key, index);
         }

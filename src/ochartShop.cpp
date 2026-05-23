@@ -6162,6 +6162,17 @@ wxString ChooseInstallDir(wxString wk_installDir)
 
 
 
+// gtargetChart/gtargetSlot are set in doDownload() and read by
+// DpOchartsAPI::UninstallChart to refuse removal while an install is in
+// flight. They were never cleared on completion, so the last-installed chart
+// could not be uninstalled until OpenCPN restarted. Reset them at every
+// terminal exit of the install/cancel flow.
+static void resetInstallTargets()
+{
+    gtargetChart = nullptr;
+    gtargetSlot = nullptr;
+}
+
 void shopPanel::OnButtonInstallChain( wxCommandEvent& event )
 {
     wxLogMessage(_T("o-charts_pi: OnButtonInstallChain entry, idlQueue=%d, dlQueue.size=%d"),
@@ -6176,6 +6187,7 @@ void shopPanel::OnButtonInstallChain( wxCommandEvent& event )
             g_dpDownloadCompleteCallback(false, "Chart download cancelled.");
         //ShowOERNCMessageDialog(NULL, _("Chart download cancelled."), _("o-charts_pi Message"), wxOK);
         //UpdateActionControls();
+        resetInstallTargets();
         return;
     }
 
@@ -6326,6 +6338,7 @@ void shopPanel::OnButtonInstallChain( wxCommandEvent& event )
                             setStatusText( _("Status: Ready"));
                             UpdateChartList();
                             UpdateActionControls();*/
+                            resetInstallTargets();
                             return;
                         }
 
@@ -6335,6 +6348,7 @@ void shopPanel::OnButtonInstallChain( wxCommandEvent& event )
                             setStatusText( _("Status: Ready"));
                             UpdateChartList();
                             UpdateActionControls();*/
+                            resetInstallTargets();
                             return;
                         }
 
@@ -6353,6 +6367,7 @@ void shopPanel::OnButtonInstallChain( wxCommandEvent& event )
                             setStatusText( _("Status: Ready"));
                             UpdateChartList();
                             UpdateActionControls();*/
+                            resetInstallTargets();
                             return;
                         }
 
@@ -6362,6 +6377,7 @@ void shopPanel::OnButtonInstallChain( wxCommandEvent& event )
                             setStatusText( _("Status: Ready"));
                             UpdateChartList();
                             UpdateActionControls();*/
+                            resetInstallTargets();
                             return;
                         }
 
@@ -6397,6 +6413,7 @@ void shopPanel::OnButtonInstallChain( wxCommandEvent& event )
                     ShowOERNCMessageDialog(NULL, msg, _("o-charts_pi Message"), wxOK);
                    /* UpdateChartList();
                     UpdateActionControls();*/
+                    resetInstallTargets();
                     return;
                 }
             }
@@ -6410,6 +6427,7 @@ void shopPanel::OnButtonInstallChain( wxCommandEvent& event )
             setStatusText( _("Status: Ready"));
             UpdateChartList();
             UpdateActionControls();*/
+            resetInstallTargets();
             return;
         }
 
@@ -6482,6 +6500,7 @@ void shopPanel::OnButtonInstallChain( wxCommandEvent& event )
         if (g_dpDownloadCompleteCallback)
             g_dpDownloadCompleteCallback(true, g_dpMessage);
 
+        resetInstallTargets();
         return;
     }
 }
@@ -6501,6 +6520,7 @@ static void notifyInstallFailure(const wxString& reason)
         if (msg.Length()) msg += " — ";
         msg += existing;
     }
+    resetInstallTargets();
     if (!g_dpDownloadCompleteCallback) return;
     auto cb = g_dpDownloadCompleteCallback;
     g_dpDownloadCompleteCallback = nullptr;
@@ -6891,6 +6911,7 @@ void shopPanel::OnButtonCancelOp()
         auto cb = g_dpDownloadCompleteCallback;
         g_dpDownloadCompleteCallback = nullptr;
         g_dpDownloadProgressCallback = nullptr;
+        resetInstallTargets();
         cb(false, _("Chart download cancelled."));
     }
 #else

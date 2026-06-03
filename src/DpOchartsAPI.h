@@ -13,6 +13,7 @@ public:
 
     virtual std::vector<DpOchartsChartInfo> GetAvailableCharts();
     virtual std::vector<DpOchartsChartInfo> GetInstalledCharts();
+    virtual std::vector<DpOchartsChartInfo> GetOnDiskCharts() override;
 
     virtual void GetAvailableChartsAsync(ChartsCallback onComplete) override;
 

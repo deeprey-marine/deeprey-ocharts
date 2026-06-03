@@ -165,6 +165,7 @@ std::vector<DpOchartsChartInfo> DpOchartsAPI::ConvertChartVector() {
         }
         dpChart.description = chart->chartName;
         dpChart.region = chart->chartID;
+        dpChart.family = (chart->GetChartType() == CHART_TYPE_OEUSENC) ? "VECTOR" : "RASTER";
         dpChart.thumbnailPath = wxEmptyString;
         wxString editionDateStr(chart->editionDate);
         unsigned long long editionDateULL;
@@ -240,6 +241,21 @@ std::vector<DpOchartsChartInfo> DpOchartsAPI::GetInstalledCharts(){
     std::vector<DpOchartsChartInfo> result;
     for (DpOchartsChartInfo chart : charts)
         if (chart.status == DpChartStatus::INSTALLED) result.push_back(chart);
+    return result;
+}
+
+std::vector<DpOchartsChartInfo> DpOchartsAPI::GetOnDiskCharts(){
+    // LOCAL only. ConvertChartVector() reads the in-memory ChartVector, which
+    // loadShopConfig() reconstructs from opencpn.conf at startup — no network,
+    // no login. (Contrast GetCharts(), which first calls OnButtonUpdate() to
+    // refresh from the o-charts server.) Keep only charts whose files are on
+    // disk: installedVersion mirrors the slot's installedEdition, which
+    // UninstallChart() clears, so non-empty <=> files present on this device.
+    std::vector<DpOchartsChartInfo> all = ConvertChartVector();
+    std::vector<DpOchartsChartInfo> result;
+    for (const DpOchartsChartInfo& c : all)
+        if (!c.installedVersion.IsEmpty())
+            result.push_back(c);
     return result;
 }
 

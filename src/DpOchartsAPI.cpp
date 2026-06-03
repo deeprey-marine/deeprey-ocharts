@@ -138,6 +138,10 @@ std::vector<DpOchartsChartInfo> DpOchartsAPI::ConvertChartVector() {
         }
 
         dpChart.installedVersion = slot ? wxString(slot->installedEdition) : wxString();
+        if (slot && !slot->installLocation.empty() && !slot->chartDirName.empty())
+            dpChart.dir = wxString(slot->installLocation.c_str()) +
+                          wxFileName::GetPathSeparator() +
+                          wxString(slot->chartDirName.c_str());
         wxString::const_iterator dummy;
         dpChart.expiryDate.ParseFormat(chart->expDate, "%Y-%m-%d %H:%M:%S", &dummy);
 

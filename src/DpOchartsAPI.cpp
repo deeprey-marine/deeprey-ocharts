@@ -444,60 +444,39 @@ void DpOchartsAPI::UninstallChart(const wxString& chartId, UninstallCallback onC
 
     saveShopConfig();
 
-    // 4) Force OpenCPN to rescan and rewrite chartlist.dat. Symmetric to
-    // install at ochartShop.cpp:6476-6480. ForceChartDBUpdate() alone is a
-    // no-op outside the open Options dialog (see ocpn_plugin_gui.cpp:1403).
+    // 4) Force OpenCPN to rescan and rewrite chartlist.dat WITHOUT dropping any
+    // chart directory we don't own. Start from the live chart-DB array
+    // (GetChartDBDirArrayString) — the authoritative set of everything OpenCPN
+    // currently knows about: the basemap, USB-imported charts under
+    // .opencpn/Charts/Imported, downloaded catalogs, other still-installed
+    // o-charts sets, and any user-added dirs — then remove only the directory we
+    // just deleted in step 1.
     //
-    // Two pitfalls solved here:
-    //   a) ChartDatabase::Update() at chartdbs.cpp:1811 REPLACES m_dir_array
-    //      with what we pass, and the result is persisted into chartlist.dat
-    //      (loaded back as m_dir_array on next OpenCPN start). So whatever we
-    //      pass is sticky across sessions until the next rebuild.
-    //   b) The install path's "covered" check at ochartShop.cpp:6427 uses
-    //      StartsWith() against m_dir_array. If a parent dir like
-    //      "/home/opencpn/Charts" sits in there, EVERY future install path
-    //      under it tests as covered, install skips its own
-    //      UpdateChartDBInplace, and the new charts never make it into
-    //      chartlist.dat — so they're invisible despite being on disk.
+    // Why not rebuild from opencpn.conf /ChartDirectories + slots (the previous
+    // approach): UpdateChartDBInplace updates m_dir_array + chartlist.dat but
+    // never writes /ChartDirectories (only the Options dialog and startup do),
+    // so on the MFD that config section holds only the basemap. Every chart
+    // registered via UpdateChartDBInplace — all USB-imported charts included —
+    // was therefore absent from the rebuilt list and silently deleted, because
+    // Update() at chartdbs.cpp:1811 REPLACES m_dir_array with whatever we pass
+    // and persists it. Starting from the live array preserves them by
+    // construction.
     //
-    // Avoid both by building dirs from scratch:
-    //   - persistent ChartDirs straight from opencpn.conf (g_pconfig), not
-    //     GetChartDBDirArrayString() — that would inherit any prior pollution.
-    //     Entries are stored as "path^magic_number" (see navutil.cpp:1500), so
-    //     strip everything from '^' onward — otherwise the magic-suffixed path
-    //     fails wxDir::Exists() and the directory's charts (e.g. the basemap)
-    //     are silently dropped from chartlist.dat.
-    //   - plus the per-chartset install dir of every still-installed slot
-    //     (the just-removed slot's state was cleared above so it's excluded)
-    wxArrayString dirs;
-    if (g_pconfig) {
-        wxString savedPath = g_pconfig->GetPath();
-        g_pconfig->SetPath("/ChartDirectories");
-        wxString key, value;
-        long index;
-        bool cont = g_pconfig->GetFirstEntry(key, index);
-        while (cont) {
-            if (g_pconfig->Read(key, &value) && !value.IsEmpty()) {
-                dirs.Add(value.BeforeFirst('^'));
-            }
-            cont = g_pconfig->GetNextEntry(key, index);
-        }
-        g_pconfig->SetPath(savedPath);
-    }
-    for (size_t i = 0; i < ChartVector.size(); i++) {
-        itemChart* c = ChartVector[i];
-        if (!c) continue;
-        for (size_t qi = 0; qi < c->quantityList.size(); qi++) {
-            for (size_t si = 0; si < c->quantityList[qi].slotList.size(); si++) {
-                itemSlot* s = c->quantityList[qi].slotList[si];
-                if (!s || s->installLocation.empty() || s->chartDirName.empty())
-                    continue;
-                wxString chartDir = wxString(s->installLocation.c_str()) +
-                                    wxFileName::GetPathSeparator() +
-                                    wxString(s->chartDirName.c_str());
-                if (dirs.Index(chartDir) == wxNOT_FOUND)
-                    dirs.Add(chartDir);
-            }
+    // The removal below is cleanup, not load-bearing: step 1 already wiped the
+    // files, so the forced rescan drops this chartset's charts whether or not
+    // its entry is still listed. GetChartDBDirArrayString() returns plain
+    // fullpaths (magic_number is stored separately — chartdbs.cpp:1880), so
+    // there is no "^magic" suffix to strip.
+    wxArrayString dirs = GetChartDBDirArrayString();
+    if (!installDir.IsEmpty()) {
+        wxString target = installDir;
+        if (target.EndsWith(wxFileName::GetPathSeparator()))
+            target = target.Truncate(target.Length() - 1);
+        for (int i = (int)dirs.GetCount() - 1; i >= 0; i--) {
+            wxString d = dirs[i];
+            if (d.EndsWith(wxFileName::GetPathSeparator()))
+                d = d.Truncate(d.Length() - 1);
+            if (d == target) dirs.RemoveAt(i);
         }
     }
     UpdateChartDBInplace(dirs, /*b_force_update=*/true, /*b_ProgressDialog=*/false);

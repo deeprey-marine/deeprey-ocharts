@@ -135,6 +135,36 @@ S52_TextC::~S52_TextC() {
   }
 }
 
+wxRect2D::wxRect2D() : x(0), y(0), width(0), height(0) {}
+wxRect2D:: wxRect2D(double xx, double yy, double w, double h)
+      : x(xx), y(yy), width(w), height(h) {}
+
+bool wxRect2D::Intersects(const wxRect2D& other,
+                  double epsilon) const {
+  return !((x + width) <= (other.x + epsilon) ||
+           (other.x + other.width) <= (x + epsilon) ||
+           (y + height) <= (other.y + epsilon) ||
+           (other.y + other.height) <= (y + epsilon));
+}
+
+wxRect2D wxRect2D::Union(const wxRect2D& other) const
+{
+  if (IsEmpty())
+    return other;
+
+  if (other.IsEmpty())
+    return *this;
+
+  double left   = (x < other.x) ? x : other.x;
+  double top    = (y < other.y) ? y : other.y;
+  double r1 = x + width,  r2 = other.x + other.width;
+  double right  = (r1 > r2) ? r1 : r2;
+  double b1 = y + height, b2 = other.y + other.height;
+  double bottom = (b1 > b2) ? b1 : b2;
+
+  return wxRect2D(left, top, right - left, bottom - top);
+}
+
 #ifndef __OCPN__ANDROID__
 // This is a verbatim copy of same struct found in ocpn_plugin.h
 // Used for some types of plugin charts
@@ -1721,19 +1751,19 @@ S52_TextC *s52plib::S52_PL_parseTE(ObjRazRules *rzRules, Rules *rules,
   return text;
 }
 
-static void rotate(wxRect *r, VPointCompat const *vp) {
+static void rotate(wxRect2D *r, VPointCompat const *vp) {
   float cx = vp->pix_width / 2.;
   float cy = vp->pix_height / 2.;
   float c = cosf(vp->rotation);
   float s = sinf(vp->rotation);
-  float x = r->GetX() - cx;
-  float y = r->GetY() - cy;
+  float x = r->x - cx;
+  float y = r->y - cy;
   r->SetX(x * c - y * s + cx);
   r->SetY(x * s + y * c + cy);
 }
 
 bool s52plib::RenderText(wxDC *pdc, S52_TextC *ptext, double x, double y,
-                         wxRect *pRectDrawn, S57Obj *pobj, bool bCheckOverlap) {
+                         wxRect2D *pRectDrawn, S57Obj *pobj, bool bCheckOverlap) {
 #ifdef DrawText
 #undef DrawText
 #define FIXIT
@@ -2290,15 +2320,16 @@ bool s52plib::RenderText(wxDC *pdc, S52_TextC *ptext, double x, double y,
 
 //    Return true if test_rect overlaps any rect in the current text rectangle
 //    list, except itself
-bool s52plib::CheckTextRectList(const wxRect &test_rect, S52_TextC *ptext) {
+bool s52plib::CheckTextRectList(const wxRect2D &test_rect, S52_TextC *ptext) {
   //    Iterate over the current object list, looking at rText
 
   for (TextObjList::Node *node = m_textObjList.GetFirst(); node;
        node = node->GetNext()) {
-    wxRect *pcurrent_rect = &(node->GetData()->rText);
+    wxRect2D *pcurrent_rect = &(node->GetData()->rText);
+    if (node->GetData() == ptext) continue;
 
     if (pcurrent_rect->Intersects(test_rect)) {
-      if (node->GetData() != ptext) return true;
+        return true;
     }
   }
   return false;
@@ -2464,7 +2495,7 @@ int s52plib::RenderT_All(ObjRazRules *rzRules, Rules *rules,
     wxPoint2DDouble dr;
     GetDoublePointPixSingle(rzRules, rzRules->obj->y, rzRules->obj->x, &dr);
 
-    wxRect rect;
+    wxRect2D rect;
     bool bwas_drawn = RenderText(m_pdc, text, dr.m_x, dr.m_y, &rect, rzRules->obj,
                                  m_bDeClutterText);
 
@@ -2482,7 +2513,7 @@ int s52plib::RenderT_All(ObjRazRules *rzRules, Rules *rules,
       } else {  // object was drawn
         text = rzRules->obj->FText;
 
-        wxRect r0 = text->rText;
+        wxRect2D r0 = text->rText;
         r0 = r0.Union(rect);
         text->rText = r0;
 
@@ -2518,9 +2549,9 @@ int s52plib::RenderT_All(ObjRazRules *rzRules, Rules *rules,
     {
       double latmin, lonmin, latmax, lonmax;
 
-      GetPixPointSingleNoRotate(rect.GetX(), rect.GetY() + rect.GetHeight(),
+      GetPixPointSingleNoRotate(rect.x, rect.y + rect.height,
                                 &latmin, &lonmin);
-      GetPixPointSingleNoRotate(rect.GetX() + rect.GetWidth(), rect.GetY(),
+      GetPixPointSingleNoRotate(rect.x + rect.width, rect.y,
                                 &latmax, &lonmax);
       LLBBox bbtext;
       bbtext.Set(latmin, lonmin, latmax, lonmax);
@@ -9921,23 +9952,6 @@ bool s52plib::EnableGLLS(bool b_enable) {
 
 void s52plib::AdjustTextList(int dx, int dy, int screenw, int screenh) {
   return;
-  wxRect rScreen(0, 0, screenw, screenh);
-  //    Iterate over the text rectangle list
-  //        1.  Apply the specified offset to the list elements
-  //        2.. Remove any list elements that are off screen after applied
-  //        offset
-
-  TextObjList::Node *node = m_textObjList.GetFirst();
-  TextObjList::Node *next;
-  while (node) {
-    next = node->GetNext();
-    wxRect *pcurrent = &(node->GetData()->rText);
-    pcurrent->Offset(dx, dy);
-    if (!pcurrent->Intersects(rScreen)) {
-      m_textObjList.DeleteNode(node);
-    }
-    node = next;
-  }
 }
 
 bool s52plib::GetPointPixArray(ObjRazRules *rzRules, wxPoint2DDouble *pd,

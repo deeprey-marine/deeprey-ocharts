@@ -31,7 +31,6 @@
 #include "ocpn_plugin.h"
 #include "s52s57.h"
 #include "s57RegistrarMgr.h"
-#include "sha256.h"
 #include "uKey.h"
 
 extern s57RegistrarMgr* pi_poRegistrarMgr;
@@ -242,7 +241,6 @@ bool OsencFeatureExtractor::Extract(const wxString& chartSetDir, const wxString&
     double bla0 = 90, blo0 = 180, bla1 = -90, blo1 = -180;
     uint32_t cellCount = 0, featureCount = 0;
     const int total = (int)cells.GetCount();
-    std::vector<std::string> keyDigestInput;    // "cell:key" per licensed cell, sorted before hashing
 
     // ---- pass 1: cell index --------------------------------------------------------------
     // ingestHeader() is the only ingest that retains CELL_COVR; ingest200() reads and discards
@@ -272,8 +270,6 @@ bool OsencFeatureExtractor::Extract(const wxString& chartSetDir, const wxString&
 
         Extent& ext = senc.getReadExtent();
         wxFileName fn(path);
-        keyDigestInput.push_back(std::string((const char*)fn.GetName().mb_str()) + ":" +
-                                 std::string((const char*)key.mb_str()));
         w.Str((const char*)fn.GetName().mb_str());
         w.U8(BandFromScale(senc.getSENCReadScale()));
         w.F64(ext.SLAT); w.F64(ext.WLON); w.F64(ext.NLAT); w.F64(ext.ELON);
@@ -459,18 +455,6 @@ bool OsencFeatureExtractor::Extract(const wxString& chartSetDir, const wxString&
         m_lastError = _("This chart set yielded no routing data");
         return false;
     }
-
-    // Bind the result to this device. Sorted so the digest does not depend on directory order.
-    std::sort(keyDigestInput.begin(), keyDigestInput.end());
-    SHA256_CTX ctx;
-    sha256_init(&ctx);
-    for (size_t k = 0; k < keyDigestInput.size(); k++)
-        sha256_update(&ctx, (const BYTE*)keyDigestInput[k].data(), keyDigestInput[k].size());
-    BYTE digest[SHA256_BLOCK_SIZE];
-    sha256_final(&ctx, digest);
-    m_boundTo.Clear();
-    for (int k = 0; k < SHA256_BLOCK_SIZE; k++)
-        m_boundTo += wxString::Format(_T("%02x"), digest[k]);
 
     wxLogMessage(wxString::Format(_T("OsencFeatureExtractor: %u cells, %u features -> %s"),
                                   cellCount, featureCount, bundlePath.c_str()));

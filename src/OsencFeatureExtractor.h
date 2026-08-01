@@ -26,14 +26,8 @@ public:
 
     wxString GetLastError() const { return m_lastError; }
 
-    // SHA-256 over the set's per-cell install keys, in cell-name order. The keys themselves
-    // never leave this class; only the digest, which binds a compiled patch to this device
-    // exactly as o-charts binds the charts it came from. Valid after a successful Extract().
-    wxString GetBoundTo() const { return m_boundTo; }
-
 private:
     wxString m_lastError;
-    wxString m_boundTo;
 };
 
 #endif  // OSENC_FEATURE_EXTRACTOR_H

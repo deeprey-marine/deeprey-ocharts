@@ -42,6 +42,7 @@ public:
     virtual bool ExportRoutingFeatures(const wxString& chartSetDir, const wxString& bundlePath,
                                        std::function<void(int done, int total)> onProgress,
                                        wxString& boundTo) override;
+    virtual wxString GetRoutingBinding() override;
 private:
     std::vector<DpOchartsChartInfo> GetCharts();
     // Build DpOchartsChartInfo entries from the legacy ChartVector. MUST be

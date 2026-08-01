@@ -3,6 +3,7 @@
 #include "ocpn_plugin.h"
 #include "fpr.h"
 #include "OsencFeatureExtractor.h"
+#include "sha256.h"
 #include <wx/fileconf.h>
 #include <wx/dir.h>
 #include <wx/filename.h>
@@ -519,14 +520,38 @@ wxDateTime DpOchartsAPI::GetLastSyncTime() { return wxDateTime(); }
 wxString DpOchartsAPI::GetSystemName() { return g_systemName; }
 wxString DpOchartsAPI::GetDongleName() { return g_dongleName; }
 
+// The identity o-charts binds licences to is the system name derived from this machine's
+// fingerprint — the same value the shop shows and issues install keys against. Hashing it gives
+// a stable per-device token that carries nothing identifying and does not change when charts are
+// updated (binding on the install keys would, and would wrongly disown a still-valid build).
+wxString DpOchartsAPI::GetRoutingBinding() {
+    if (!g_systemName.Length()) shopPanel::GetShopNameFromFPR();
+    if (!g_systemName.Length()) return wxEmptyString;
+
+    const wxScopedCharBuffer buf = g_systemName.ToUTF8();
+    SHA256_CTX ctx;
+    sha256_init(&ctx);
+    sha256_update(&ctx, (const BYTE*)buf.data(), strlen(buf.data()));
+    BYTE digest[SHA256_BLOCK_SIZE];
+    sha256_final(&ctx, digest);
+
+    wxString hex;
+    for (int i = 0; i < SHA256_BLOCK_SIZE; i++) hex += wxString::Format(_T("%02x"), digest[i]);
+    return hex;
+}
+
 bool DpOchartsAPI::ExportRoutingFeatures(const wxString& chartSetDir, const wxString& bundlePath,
                                          std::function<void(int done, int total)> onProgress,
                                          wxString& boundTo) {
+    boundTo = GetRoutingBinding();
+    if (boundTo.IsEmpty()) {
+        m_lastError = _("Cannot identify this device");
+        return false;
+    }
     OsencFeatureExtractor extractor;
     if (!extractor.Extract(chartSetDir, bundlePath, onProgress)) {
         m_lastError = extractor.GetLastError();
         return false;
     }
-    boundTo = extractor.GetBoundTo();
     return true;
 }

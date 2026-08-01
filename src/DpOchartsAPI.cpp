@@ -2,6 +2,7 @@
 #include "ochartShop.h"
 #include "ocpn_plugin.h"
 #include "fpr.h"
+#include "OsencFeatureExtractor.h"
 #include <wx/fileconf.h>
 #include <wx/dir.h>
 #include <wx/filename.h>
@@ -517,3 +518,15 @@ void DpOchartsAPI::SyncWithService(){ }
 wxDateTime DpOchartsAPI::GetLastSyncTime() { return wxDateTime(); }
 wxString DpOchartsAPI::GetSystemName() { return g_systemName; }
 wxString DpOchartsAPI::GetDongleName() { return g_dongleName; }
+
+bool DpOchartsAPI::ExportRoutingFeatures(const wxString& chartSetDir, const wxString& bundlePath,
+                                         std::function<void(int done, int total)> onProgress,
+                                         wxString& boundTo) {
+    OsencFeatureExtractor extractor;
+    if (!extractor.Extract(chartSetDir, bundlePath, onProgress)) {
+        m_lastError = extractor.GetLastError();
+        return false;
+    }
+    boundTo = extractor.GetBoundTo();
+    return true;
+}

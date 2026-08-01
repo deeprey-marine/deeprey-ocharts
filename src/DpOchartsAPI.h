@@ -39,6 +39,9 @@ public:
     virtual wxDateTime GetLastSyncTime();
     virtual wxString GetSystemName();
     virtual wxString GetDongleName() override;
+    virtual bool ExportRoutingFeatures(const wxString& chartSetDir, const wxString& bundlePath,
+                                       std::function<void(int done, int total)> onProgress,
+                                       wxString& boundTo) override;
 private:
     std::vector<DpOchartsChartInfo> GetCharts();
     // Build DpOchartsChartInfo entries from the legacy ChartVector. MUST be

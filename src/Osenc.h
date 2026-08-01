@@ -490,6 +490,7 @@ public:
     void setRegistrar( S57ClassRegistrar *registrar ){ m_poRegistrar = registrar; }
     void setRegistrarMgr( s57RegistrarMgr *mgr ){ m_pRegistrarMan = mgr; }
     void setRefLocn( double lat, double lon){ m_ref_lat = lat; m_ref_lon = lon; }
+    void getRefLocn( double *lat, double *lon){ *lat = m_ref_lat; *lon = m_ref_lon; }
     void setKey( wxString& key){ m_key = key; }
     void setCtype( int type );
 

@@ -205,9 +205,49 @@ double SignedArea2(const std::vector<XY>& r) {
 
 }  // namespace
 
-bool OsencFeatureExtractor::Extract(const wxString& chartSetDir, const wxString& bundlePath,
-                                    std::function<void(int done, int total)> onProgress) {
+// Everything the read carries between chunks. Kept in the .cpp so the header need not know
+// about BundleWriter (which is file-local) or FILE*.
+struct OsencFeatureExtractor::State {
+    wxString bundlePath;
+    wxArrayString cells;
+    FILE* out = nullptr;
+    BundleWriter* w = nullptr;
+    Header hdr;
+    int total = 0, index = 0, pass = 1;
+    uint32_t cellCount = 0, featureCount = 0;
+    double bla0 = 90, blo0 = 180, bla1 = -90, blo1 = -180;
+};
+
+OsencFeatureExtractor::OsencFeatureExtractor() {}
+
+OsencFeatureExtractor::~OsencFeatureExtractor() {
+    // Abandoning mid-read must not leave a half-written bundle behind: it is chart-derived
+    // data, and a truncated one would be indistinguishable from a good one to the compiler.
+    if (m_state) {
+        const bool incomplete = m_state->out != nullptr;
+        Cleanup(incomplete);
+    }
+}
+
+void OsencFeatureExtractor::Cleanup(bool removeBundle) {
+    if (!m_state) return;
+    delete m_state->w;
+    if (m_state->out) fclose(m_state->out);
+    if (removeBundle && !m_state->bundlePath.IsEmpty()) ::wxRemoveFile(m_state->bundlePath);
+    delete m_state;
+    m_state = nullptr;
+}
+
+int OsencFeatureExtractor::Done() const {
+    if (!m_state) return 0;
+    return m_state->pass == 1 ? m_state->index : m_state->total + m_state->index;
+}
+
+int OsencFeatureExtractor::Total() const { return m_state ? m_state->total * 2 : 0; }
+
+bool OsencFeatureExtractor::Begin(const wxString& chartSetDir, const wxString& bundlePath) {
     m_lastError.Clear();
+    Cleanup(false);
 
     if (!pi_poRegistrarMgr) {
         // Without the registrar the SENC's numeric type codes cannot be resolved to S-57
@@ -223,6 +263,9 @@ bool OsencFeatureExtractor::Extract(const wxString& chartSetDir, const wxString&
         return false;
     }
 
+    // Starts the decryption server if it is not already up. Must happen HERE, on the caller's
+    // thread, before any stepping: it calls wxExecute and can raise a message box, neither of
+    // which is safe anywhere but the main thread.
     validate_SENC_server();
 
     FILE* out = fopen((const char*)bundlePath.mb_str(), "wb");
@@ -230,24 +273,33 @@ bool OsencFeatureExtractor::Extract(const wxString& chartSetDir, const wxString&
         m_lastError = _("Could not write the routing bundle");
         return false;
     }
-    BundleWriter w(out);
 
-    Header hdr;
-    memset(&hdr, 0, sizeof(hdr));
-    memcpy(hdr.magic, kMagic, 4);
-    hdr.version = kVersion;
-    fwrite(&hdr, sizeof(hdr), 1, out);          // rewritten at the end, once the counts are known
+    m_state = new State();
+    m_state->bundlePath = bundlePath;
+    m_state->cells = cells;
+    m_state->out = out;
+    m_state->w = new BundleWriter(out);
+    m_state->total = (int)cells.GetCount();
 
-    double bla0 = 90, blo0 = 180, bla1 = -90, blo1 = -180;
-    uint32_t cellCount = 0, featureCount = 0;
-    const int total = (int)cells.GetCount();
+    memset(&m_state->hdr, 0, sizeof(m_state->hdr));
+    memcpy(m_state->hdr.magic, kMagic, 4);
+    m_state->hdr.version = kVersion;
+    fwrite(&m_state->hdr, sizeof(m_state->hdr), 1, out);   // rewritten by Finish(), with counts
+    return true;
+}
 
-    // ---- pass 1: cell index --------------------------------------------------------------
-    // ingestHeader() is the only ingest that retains CELL_COVR; ingest200() reads and discards
-    // it. Coverage is what the patch planner's gate tests against, so it is captured here.
-    for (int i = 0; i < total; i++) {
+// ---- pass 1: cell index ------------------------------------------------------------------
+// ingestHeader() is the only ingest that retains CELL_COVR; ingest200() reads and discards it.
+// Coverage is what the patch planner's gate tests against, so it is captured here.
+void OsencFeatureExtractor::RunHeaderChunk(int from, int to) {
+    State& st = *m_state;
+    wxArrayString& cells = st.cells;
+    BundleWriter& w = *st.w;
+    double& bla0 = st.bla0; double& blo0 = st.blo0;
+    double& bla1 = st.bla1; double& blo1 = st.blo1;
+    uint32_t& cellCount = st.cellCount;
+    for (int i = from; i < to; i++) {
         const wxString& path = cells[i];
-        if (onProgress) onProgress(i, total * 2);
 
         wxString key = getPrimaryKey(path);
         if (!key.Len()) {
@@ -291,11 +343,16 @@ bool OsencFeatureExtractor::Extract(const wxString& chartSetDir, const wxString&
         blo0 = wxMin(blo0, ext.WLON); blo1 = wxMax(blo1, ext.ELON);
         cellCount++;
     }
+}
 
-    // ---- pass 2: features ------------------------------------------------------------------
-    for (int i = 0; i < total; i++) {
+// ---- pass 2: features --------------------------------------------------------------------
+void OsencFeatureExtractor::RunFeatureChunk(int from, int to) {
+    State& st = *m_state;
+    wxArrayString& cells = st.cells;
+    BundleWriter& w = *st.w;
+    uint32_t& featureCount = st.featureCount;
+    for (int i = from; i < to; i++) {
         const wxString& path = cells[i];
-        if (onProgress) onProgress(total + i, total * 2);
 
         wxString key = getPrimaryKey(path);
         if (!key.Len()) { key = getAlternateKey(path); if (!key.Len()) continue; }
@@ -440,23 +497,57 @@ bool OsencFeatureExtractor::Extract(const wxString& chartSetDir, const wxString&
         for (size_t k = 0; k < ves.size(); k++) if (ves[k]) { free(ves[k]->pPoints); delete ves[k]; }
         for (size_t k = 0; k < vcs.size(); k++) if (vcs[k]) { free(vcs[k]->pPoint); delete vcs[k]; }
     }
+}
 
-    if (onProgress) onProgress(total * 2, total * 2);
+bool OsencFeatureExtractor::Step(int maxCells) {
+    if (!m_state) return false;
+    if (maxCells < 1) maxCells = 1;
+    State& st = *m_state;
 
-    hdr.cell_count = cellCount;
-    hdr.feature_count = featureCount;
-    hdr.la0 = bla0; hdr.lo0 = blo0; hdr.la1 = bla1; hdr.lo1 = blo1;
-    fseek(out, 0, SEEK_SET);
-    fwrite(&hdr, sizeof(hdr), 1, out);
-    fclose(out);
+    const int to = wxMin(st.index + maxCells, st.total);
+    if (st.pass == 1) RunHeaderChunk(st.index, to);
+    else              RunFeatureChunk(st.index, to);
+    st.index = to;
 
-    if (cellCount == 0 || featureCount == 0) {
-        ::wxRemoveFile(bundlePath);
+    if (st.index >= st.total) {
+        if (st.pass == 1) { st.pass = 2; st.index = 0; return true; }
+        return false;                       // both passes complete
+    }
+    return true;
+}
+
+bool OsencFeatureExtractor::Finish() {
+    if (!m_state) return false;
+    State& st = *m_state;
+
+    st.hdr.cell_count = st.cellCount;
+    st.hdr.feature_count = st.featureCount;
+    st.hdr.la0 = st.bla0; st.hdr.lo0 = st.blo0;
+    st.hdr.la1 = st.bla1; st.hdr.lo1 = st.blo1;
+    fseek(st.out, 0, SEEK_SET);
+    fwrite(&st.hdr, sizeof(st.hdr), 1, st.out);
+    fclose(st.out);
+    st.out = nullptr;                       // Cleanup must not close it twice
+
+    const uint32_t nCells = st.cellCount, nFeat = st.featureCount;
+    const wxString path = st.bundlePath;
+
+    if (nCells == 0 || nFeat == 0) {
+        Cleanup(true);
         m_lastError = _("This chart set yielded no routing data");
         return false;
     }
-
+    Cleanup(false);
     wxLogMessage(wxString::Format(_T("OsencFeatureExtractor: %u cells, %u features -> %s"),
-                                  cellCount, featureCount, bundlePath.c_str()));
+                                  nCells, nFeat, path.c_str()));
     return true;
+}
+
+// One-shot form, kept so callers that can afford to block are unchanged.
+bool OsencFeatureExtractor::Extract(const wxString& chartSetDir, const wxString& bundlePath,
+                                    std::function<void(int done, int total)> onProgress) {
+    if (!Begin(chartSetDir, bundlePath)) return false;
+    while (Step(1)) if (onProgress) onProgress(Done(), Total());
+    if (onProgress) onProgress(Total(), Total());
+    return Finish();
 }

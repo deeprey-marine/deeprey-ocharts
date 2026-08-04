@@ -540,6 +540,40 @@ wxString DpOchartsAPI::GetRoutingBinding() {
     return hex;
 }
 
+namespace {
+// Adapts the resumable extractor to the API's session interface. Owns the extractor, so
+// deleting the session mid-read runs its destructor and removes the partial bundle.
+class RoutingExportSession : public IDpRoutingExport {
+public:
+    bool Start(const wxString& dir, const wxString& bundle) { return m_ex.Begin(dir, bundle); }
+    bool Step(int maxCells) override { return m_ex.Step(maxCells); }
+    bool Finish() override { return m_ex.Finish(); }
+    int Done() const override { return m_ex.Done(); }
+    int Total() const override { return m_ex.Total(); }
+    wxString GetLastError() const override { return m_ex.GetLastError(); }
+
+private:
+    OsencFeatureExtractor m_ex;
+};
+}  // namespace
+
+IDpRoutingExport* DpOchartsAPI::BeginRoutingExport(const wxString& chartSetDir,
+                                                   const wxString& bundlePath,
+                                                   wxString& boundTo) {
+    boundTo = GetRoutingBinding();
+    if (boundTo.IsEmpty()) {
+        m_lastError = _("Cannot identify this device");
+        return nullptr;
+    }
+    RoutingExportSession* s = new RoutingExportSession();
+    if (!s->Start(chartSetDir, bundlePath)) {
+        m_lastError = s->GetLastError();
+        delete s;
+        return nullptr;
+    }
+    return s;
+}
+
 bool DpOchartsAPI::ExportRoutingFeatures(const wxString& chartSetDir, const wxString& bundlePath,
                                          std::function<void(int done, int total)> onProgress,
                                          wxString& boundTo) {

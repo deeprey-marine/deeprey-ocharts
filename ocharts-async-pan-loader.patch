@@ -1,0 +1,1185 @@
+From 3c29f4962c6965d845047d61d5ca9c6d62da4f4b Mon Sep 17 00:00:00 2001
+From: bensasl2 <ben@deeprey.com>
+Date: Tue, 2 Jun 2026 11:34:54 +0100
+Subject: [PATCH 1/2] Osenc: fix Linux decrypt EOF busy-poll and read() size_t
+ underflow
+
+---
+ src/Osenc.cpp | 43 +++++++++++++++++++++++++++++++++----------
+ 1 file changed, 33 insertions(+), 10 deletions(-)
+
+diff --git a/src/Osenc.cpp b/src/Osenc.cpp
+index de9edbe..8bc87e9 100644
+--- a/src/Osenc.cpp
++++ b/src/Osenc.cpp
+@@ -32,6 +32,9 @@
+ 
+ #include <wx/wfstream.h>
+ #include <wx/filename.h>
++#include <wx/stopwatch.h>
++
++#include <errno.h>
+ 
+ #include "Osenc.h"
+ #include "s52s57.h"
+@@ -518,20 +521,33 @@ Osenc_instream &Osenc_instream::Read(void *buffer, size_t size)
+             do{
+                 size_t bytes_to_read = MIN(remains, max_read);
+ 
+-                size_t bytesRead = read(privatefifo, bufRun, bytes_to_read );
++                // NOTE: read() returns ssize_t. Storing it in an unsigned size_t
++                // made a -1 (error) wrap to SIZE_MAX and corrupt remains/bufRun.
++                ssize_t bytesRead = read(privatefifo, bufRun, bytes_to_read );
+ 
+-                // Server may not have opened the Write end of the FIFO yet
+-                if(bytesRead == 0){
+-//                    printf("miss %d %d %d\n", nLoop, bytes_to_read, size);
++                if(bytesRead > 0){
++                    remains -= bytesRead;
++                    bufRun += bytesRead;
++                    totalBytesRead += bytesRead;
++                    nLoop = MAX_TRIES;          // made progress, reset retry budget
++                }
++                else if(bytesRead == 0){
++                    // EOF. The private FIFO is opened blocking (O_RDONLY, no
++                    // O_NONBLOCK), so read() returns 0 only once the server has
++                    // closed the write end, i.e. genuine end-of-stream. The old
++                    // code mistook this for "server not ready yet" and spun
++                    // MAX_TRIES * wxMilliSleep(1) (~100 ms) at the tail of every
++                    // decrypted cell. Stop immediately instead.
++                    break;
++                }
++                else {
++                    // read() error. Retry transient interruptions, otherwise back
++                    // off under a bounded budget rather than spin or corrupt counts.
++                    if(errno == EINTR)
++                        continue;
+                     nLoop --;
+                     wxMilliSleep(1);
+                 }
+-                else
+-                    nLoop = MAX_TRIES;
+-
+-                remains -= bytesRead;
+-                bufRun += bytesRead;
+-                totalBytesRead += bytesRead;
+             } while( (remains > 0) && (nLoop) );
+ 
+             m_OK = (totalBytesRead == size);
+@@ -1251,6 +1267,10 @@ int Osenc::ingest200(const wxString &senc_file_name,
+     wxFileName fn(senc_file_name);
+     m_ID = fn.GetName();                          // This will be the NOAA File name, usually
+ 
++    // PERF instrumentation: measure full per-cell decrypt+parse wall-clock
++    // (FIFO handshake + verifySENC + record ingest). Grep the log for "OCHARTS_PERF".
++    wxStopWatch sw_ingest;
++
+     //    Sanity check for existence of file
+     if(!fn.Exists())
+         return ERROR_SENCFILE_NOT_FOUND;
+@@ -1960,6 +1980,9 @@ int Osenc::ingest200(const wxString &senc_file_name,
+ 
+     if(g_debugLevel) wxLogMessage(_T("ingest200 SENC Ingested OK"));
+ 
++    if(g_debugLevel) wxLogMessage(_T("OCHARTS_PERF ingest200 cell=%s ms=%ld"),
++                 m_ID, sw_ingest.Time());
++
+     return ret_val;
+ 
+ }
+-- 
+2.39.5
+
+
+From 6a18bcc4a18a2f76562bc7902681387b7a8f2762 Mon Sep 17 00:00:00 2001
+From: bensasl2 <ben@deeprey.com>
+Date: Tue, 2 Jun 2026 17:35:25 +0100
+Subject: [PATCH 2/2] ocharts: async (off-thread) chart loader to remove
+ pan/zoom decrypt lag
+
+- Move the blocking oexserverd decrypt + SENC parse off the GUI thread into a
+  single background worker (eSENCChartLoadManager); panning no longer freezes
+  ~141ms/cell. The render virtuals are gated on a new m_bDataReady flag, so a
+  not-yet-loaded cell shows the basemap until the worker completes + RequestRefresh.
+- Split BuildRAZFromSENCFile into BuildRAZ_WorkerPhase (decrypt/parse, no ps52plib)
+  and BuildRAZ_MainPhase (ps52plib LUP walk + assembly, GUI thread).
+- Stage all GUI-visible metadata in ChartLoadJob and copy it to chart members on
+  the GUI thread (race-free); no synchronous per-cell header round-trip.
+- Lifetime: per-chart shared_ptr<JobState>; ~eSENCChart CancelAndWait blocks until
+  the worker leaves the chart's phase. Expiry handled in FinishAsyncLoad; DeInit
+  shuts the SENC server down before joining the worker so it cannot hang.
+---
+ Plugin.cmake                  |   2 +
+ src/Osenc.cpp                 |  10 +-
+ src/eSENCChart.cpp            | 468 ++++++++++++++++++++++------------
+ src/eSENCChart.h              |  74 ++++++
+ src/eSENCChartLoadManager.cpp | 123 +++++++++
+ src/eSENCChartLoadManager.h   |  58 +++++
+ src/o-charts_pi.cpp           |  16 ++
+ 7 files changed, 587 insertions(+), 164 deletions(-)
+ create mode 100644 src/eSENCChartLoadManager.cpp
+ create mode 100644 src/eSENCChartLoadManager.h
+
+diff --git a/Plugin.cmake b/Plugin.cmake
+index c5a7bca..c39e3cc 100644
+--- a/Plugin.cmake
++++ b/Plugin.cmake
+@@ -95,6 +95,8 @@ set(SRC
+   src/cutil.cpp
+   src/eSENCChart.cpp
+   src/eSENCChart.h
++  src/eSENCChartLoadManager.cpp
++  src/eSENCChartLoadManager.h
+   src/fpr.cpp
+   src/georef.cpp
+   src/InstallDirs.cpp
+diff --git a/src/Osenc.cpp b/src/Osenc.cpp
+index 8bc87e9..5ca4cdf 100644
+--- a/src/Osenc.cpp
++++ b/src/Osenc.cpp
+@@ -953,10 +953,12 @@ int Osenc::verifySENC(Osenc_instream &fpx, const wxString &senc_file_name)
+             m_expireDaysRemaining = ppayload->expireDaysRemaining;
+             m_graceDaysAllowed = ppayload->graceDaysAllowed;
+             m_graceDaysRemining = ppayload->graceDaysRemaining;
+-            wxString msg;
+-            msg.Printf(_T("verifySENC s0:  %d  %d  %d  %d"),
+-                       ppayload->expireStatus, ppayload->expireDaysRemaining, ppayload->graceDaysAllowed, ppayload->graceDaysRemaining);
+-            wxLogMessage(msg);
++            if(g_debugLevel){      // runs per cell, incl. on the async worker thread
++                wxString msg;
++                msg.Printf(_T("verifySENC s0:  %d  %d  %d  %d"),
++                           ppayload->expireStatus, ppayload->expireDaysRemaining, ppayload->graceDaysAllowed, ppayload->graceDaysRemaining);
++                wxLogMessage(msg);
++            }
+ 
+ 
+             if(!m_uSENCexpireOK)
+diff --git a/src/eSENCChart.cpp b/src/eSENCChart.cpp
+index d7dcaa0..7d2a580 100644
+--- a/src/eSENCChart.cpp
++++ b/src/eSENCChart.cpp
+@@ -42,6 +42,7 @@
+ 
+ #include "o-charts_pi.h"
+ #include "eSENCChart.h"
++#include "eSENCChartLoadManager.h"
+ #include "mygeom.h"
+ #include "cpl_csv.h"
+ 
+@@ -813,16 +814,20 @@ int oesuChart::Init( const wxString& name, int init_flags )
+         ret_val = PostInit( init_flags, global_color_scheme );
+     }
+ 
+-    // Process any expiration information, only found on oesu chart types
+-
+-    if((int)ret_val == ERROR_SENC_EXPIRED){
+-        // Hard expiration, show the message and quit.
+-        ShowExpiredErrorMessage(m_FullPath, m_uSENCExpireDaysRemaining, m_uSENCGraceDaysRemaining, m_uSENCGraceDaysAllowed);
+-        ret_val = PI_INIT_FAIL_REMOVE;
+-    }
+-    else if( ret_val == PI_INIT_OK ){
+-        //  Check for "warning" cases
+-        ShowExpiredErrorMessage(m_FullPath, m_uSENCExpireDaysRemaining, m_uSENCGraceDaysRemaining, m_uSENCGraceDaysAllowed);
++    // Process expiration info for the synchronous HEADER_ONLY path (fields are set
++    // by CreateHeaderDataFromeSENC). For the async PI_FULL_INIT path, PostInit
++    // returns before the decrypt runs, so expiry is surfaced later in
++    // FinishAsyncLoad once the worker has populated the day counts.
++    if( PI_HEADER_ONLY == init_flags ){
++        if((int)ret_val == ERROR_SENC_EXPIRED){
++            // Hard expiration, show the message and quit.
++            ShowExpiredErrorMessage(m_FullPath, m_uSENCExpireDaysRemaining, m_uSENCGraceDaysRemaining, m_uSENCGraceDaysAllowed);
++            ret_val = PI_INIT_FAIL_REMOVE;
++        }
++        else if( ret_val == PI_INIT_OK ){
++            //  Check for "warning" cases
++            ShowExpiredErrorMessage(m_FullPath, m_uSENCExpireDaysRemaining, m_uSENCGraceDaysRemaining, m_uSENCGraceDaysAllowed);
++        }
+     }
+ 
+ 
+@@ -1091,64 +1096,35 @@ PI_InitReturn oesuChart::CreateHeaderDataFromeSENC()
+ 
+ PI_InitReturn oesuChart::PostInit( int flags, int cs )
+ {
+-    //    Build the RAZ structure
+-    int retCode = BuildRAZFromSENCFile( m_SENCFileName.GetFullPath(), m_rKey, CTYPE_OESU );
+-
+-    if(retCode != SENC_NO_ERROR){
+-
+-        //
+-//         if(( ERROR_SIGNATURE_FAILURE == retCode )  || ( ERROR_SENC_CORRUPT == retCode ) ){
+-//             wxString permit = GetUserKey( LEGEND_FIRST, false );
+-//             return PI_INIT_FAIL_RETRY;
+-//         }
+-//        else
+-        {
+-            wxString msg( _T("   Cannot load SENC file ") );
+-            msg.Append( m_SENCFileName.GetFullPath() );
+-            wxLogMessage( msg );
+-
+-            return (PI_InitReturn)retCode;
+-        }
++    // Async: hand the blocking oexserverd decrypt + parse to the background loader
++    // and return immediately. ALL chart state (geometry AND GUI-visible metadata)
++    // is produced off-thread into the job, then copied to members on the GUI thread
++    // by FinishAsyncLoad -> BuildRAZ_MainPhase. There is NO synchronous daemon
++    // round-trip here (a per-cell header parse costs the full ~100ms FIFO round-trip
++    // overhead, which would land right back on the paint thread). Core quilts/places
++    // the cell from the chart DB, not this live object, so default metadata at
++    // Init-return is fine; expiry is surfaced in FinishAsyncLoad once known.
++    m_loadState = std::make_shared<JobState>(this);
++
++    std::shared_ptr<ChartLoadJob> job = std::make_shared<ChartLoadJob>();
++    job->fullPath    = m_SENCFileName.GetFullPath();
++    job->key         = m_rKey;
++    job->ctype       = CTYPE_OESU;
++    job->colorScheme = cs;
++    job->state       = m_loadState;
++
++    m_bDataReady     = false;      // render gate: not ready yet
++    m_bReadyToRender = true;       // but admit to the quilt so core does not reopen
++
++    if(g_chartLoadManager){
++        g_chartLoadManager->Enqueue(job);
++    }
++    else {
++        // Manager unavailable: fall back to a fully synchronous load.
++        BuildRAZ_WorkerPhase(*job, true);
++        FinishAsyncLoad(*job);
++        m_loadState.reset();
+     }
+-
+-    //      Check for and if necessary rebuild Thumbnail
+-    //      Going to be in the global (user) SENC file directory
+-
+-    #if 0
+-    wxString SENCdir = m_senc_dir;
+-    if( SENCdir.Last() != m_SENCFileName.GetPathSeparator() )
+-        SENCdir.Append( m_SENCFileName.GetPathSeparator() );
+-
+-    wxFileName ThumbFileName( SENCdir, m_SENCFileName.GetName(), _T("BMP") );
+-
+-    if( !ThumbFileName.FileExists() || m_bneed_new_thumbnail ) BuildThumbnail(
+-        ThumbFileName.GetFullPath() );
+-    #endif
+-
+-    //  Update the member thumbdata structure
+-    #if 0
+-    if( ThumbFileName.FileExists() ) {
+-        wxBitmap *pBMP_NEW;
+-        #ifdef ocpnUSE_ocpnBitmap
+-        pBMP_NEW = new ocpnBitmap;
+-        #else
+-        pBMP_NEW = new wxBitmap;
+-        #endif
+-        if( pBMP_NEW->LoadFile( ThumbFileName.GetFullPath(), wxBITMAP_TYPE_BMP ) ) {
+-            delete pThumbData;
+-            pThumbData = new ThumbData;
+-            m_pDIBThumbDay = pBMP_NEW;
+-            //                    pThumbData->pDIBThumb = pBMP_NEW;
+-}
+-}
+-#endif
+-
+-    //    Set the color scheme
+-    SetColorScheme( cs, false );
+-
+-//    Build array of contour values for later use by conditional symbology
+-    BuildDepthContourArray();
+-    m_bReadyToRender = true;
+ 
+     return PI_INIT_OK;
+ }
+@@ -1182,6 +1158,19 @@ eSENCChart::eSENCChart()
+     m_bLinePrioritySet = false;
+     m_this_chart_context = NULL;
+ 
++    m_bDataReady = false;           // render gate: no razRules/pDIB until RAZ build completes
++    m_bLoadFailedPermanent = false;
++
++    // Deterministic defaults so an ungated accessor (GetChartExtent / expiry) that
++    // runs before the async load completes reads sane values, never uninitialized.
++    m_FullExtent.NLAT = m_FullExtent.SLAT = 0.0;
++    m_FullExtent.ELON = m_FullExtent.WLON = 0.0;
++    m_bExtentSet = false;
++    m_ref_lat = m_ref_lon = 0.0;
++    m_uSENCExpireDaysRemaining = -1;
++    m_uSENCGraceDaysAllowed    = 0;
++    m_uSENCGraceDaysRemaining  = -1;
++
+     m_nCOVREntries = 0;
+     m_pCOVRTable = NULL;
+     m_pCOVRTablePoints = NULL;
+@@ -1218,6 +1207,17 @@ eSENCChart::eSENCChart()
+ 
+ eSENCChart::~eSENCChart()
+ {
++      // Async loader: if a background load is in flight for this chart, cancel it
++      // and block until the worker is no longer inside its worker phase, so the
++      // member teardown below cannot race a use-after-free. Null the back-pointer
++      // first so any already-queued completion trampoline no-ops.
++      if(m_loadState){
++          m_loadState->chart.store(nullptr);
++          if(g_chartLoadManager)
++              g_chartLoadManager->CancelAndWait(m_loadState);
++          else
++              m_loadState->cancelled.store(true);
++      }
+ 
+       //    Free the COVR tables
+ 
+@@ -1649,6 +1649,11 @@ PI_InitReturn eSENCChart::CreateHeaderDataFromeSENC( void )
+         m_FullExtent.SLAT = ext.SLAT;
+         m_bExtentSet = true;
+ 
++        // Ref point, established synchronously here so the async worker phase never
++        // writes m_ref_lat/lon (it uses a local ref for its bbox math instead).
++        m_ref_lat = (ext.NLAT + ext.SLAT) / 2.;
++        m_ref_lon = (ext.ELON + ext.WLON) / 2.;
++
+ 
+         //Coverage areas
+         SENCFloatPtrArray &AuxPtrArray = senc.getSENCReadAuxPointArray();
+@@ -1790,6 +1795,11 @@ bool eSENCChart::ProcessHeader(Osenc &senc)
+         m_FullExtent.SLAT = ext.SLAT;
+         m_bExtentSet = true;
+ 
++        // Ref point, established synchronously here so the async worker phase never
++        // writes m_ref_lat/lon (it uses a local ref for its bbox math instead).
++        m_ref_lat = (ext.NLAT + ext.SLAT) / 2.;
++        m_ref_lon = (ext.ELON + ext.WLON) / 2.;
++
+ 
+         //Coverage areas
+         SENCFloatPtrArray &AuxPtrArray = senc.getSENCReadAuxPointArray();
+@@ -2028,6 +2038,23 @@ void eSENCChart::ClearPLIBTextList()
+ wxBitmap &eSENCChart::RenderRegionView(const PlugIn_ViewPort& VPoint, const wxRegion &Region)
+ {
+     #if 1
++    // Async loader gate: return a blank NODTA bitmap until the RAZ build completes,
++    // instead of dereferencing empty razRules / null pDIB.
++    if(!m_bDataReady){
++        if(!m_pCloneBM || m_pCloneBM->GetWidth() != VPoint.pix_width
++                       || m_pCloneBM->GetHeight() != VPoint.pix_height){
++            delete m_pCloneBM;
++            m_pCloneBM = new wxBitmap(VPoint.pix_width, VPoint.pix_height, -1);
++        }
++        wxColour nodat;
++        GetGlobalColor(_T("NODTA"), &nodat);
++        wxMemoryDC mdc(*m_pCloneBM);
++        mdc.SetBackground(wxBrush(nodat));
++        mdc.Clear();
++        mdc.SelectObject(wxNullBitmap);
++        return *m_pCloneBM;
++    }
++
+     SetVPParms( VPoint );
+ 
+     m_cvp = CreateCompatibleViewport( VPoint );
+@@ -2198,6 +2225,11 @@ int eSENCChart::RenderRegionViewOnGL( const wxGLContext &glc, const PlugIn_ViewP
+     if(!g_GLOptionsSet)
+         return 0;
+ 
++    // Async loader gate: nothing to draw until the background RAZ build completes.
++    // Leaves the cell as NODTA (blank) rather than dereferencing empty razRules / null pDIB.
++    if(!m_bDataReady)
++        return 0;
++
+     //OCPNStopWatch sw;
+ 
+     m_cvp = CreateCompatibleViewport( VPoint );
+@@ -2393,6 +2425,9 @@ int eSENCChart::RenderRegionViewOnGLTextOnly( const wxGLContext &glc, const Plug
+ 
+ #ifdef ocpnUSE_GL
+ 
++    if(!m_bDataReady)               // async loader gate (see RenderRegionViewOnGL)
++        return 0;
++
+     m_cvp = CreateCompatibleViewport( VPoint );
+ 
+     SetVPParms( VPoint );
+@@ -4550,70 +4585,99 @@ void eSENCChart::UpdateLUPsOnStateChange( void )
+ 
+ int eSENCChart::BuildRAZFromSENCFile( const wxString& FullPath, wxString& Key, int ctype )
+ {
++    // Thin synchronous wrapper preserving the original blocking behavior for
++    // callers that are not on the async path (legacy charts, header/"Prepare").
++    ChartLoadJob job;
++    job.fullPath = FullPath;
++    job.key      = Key;
++    job.ctype    = ctype;
+ 
+-    int ret_val = 0;                    // default is OK
++    int r = BuildRAZ_WorkerPhase( job );
++    if( r != SENC_NO_ERROR )
++        return r;
+ 
++    return BuildRAZ_MainPhase( job );
++}
++
++// WORKER-THREAD SAFE phase: decrypt + parse + VE/VC hashes + metadata.
++// Touches no ps52plib singleton, no razRules, no GL. Produces job.objects.
++// bAllowGui=false (async worker thread) suppresses interactive error dialogs;
++// the GUI-thread completion handles failures instead.
++int eSENCChart::BuildRAZ_WorkerPhase( ChartLoadJob& job, bool bAllowGui )
++{
+     Osenc *sencfile = new Osenc();
+ 
+     // Set up the containers for ingestion results.
+-    // These will be populated by Osenc, and owned by the caller (this).
+-    S57ObjVector Objects;
+     VE_ElementVector VEs;
+     VC_ElementVector VCs;
+ 
+-
+-
+     sencfile->setRegistrarMgr( pi_poRegistrarMgr );
+-    sencfile->setKey(Key);
+-    sencfile->setCtype( ctype );
++    sencfile->setKey(job.key);
++    sencfile->setCtype( job.ctype );
+ 
+-    int srv = sencfile->ingest200(FullPath, &Objects, &VEs, &VCs);
++    int srv = sencfile->ingest200(job.fullPath, &job.objects, &VEs, &VCs);
+ 
+     if(srv != SENC_NO_ERROR){
+         if(g_debugLevel) wxLogMessage(_T("BuildRAZFromSENCFile ingest Error"));
+ 
+         if(( ERROR_SIGNATURE_FAILURE == srv )  || ( ERROR_SENC_CORRUPT == srv ) ){
+ 
+-            if(ctype == CTYPE_OESU){
+-                ShowGenericErrorMessage(FullPath);
++            if(job.ctype == CTYPE_OESU){
++                if(bAllowGui)
++                    ShowGenericErrorMessage(job.fullPath);
++                delete sencfile;
++                job.ingestResult = srv;
++                return srv;
++            }
++
++            // Off the GUI thread we cannot show the key-fix dialog; fail soft and
++            // let a later (synchronous) reopen handle key recovery.
++            if(!bAllowGui){
++                delete sencfile;
++                job.ingestResult = srv;
+                 return srv;
+             }
+ 
+             if(g_debugLevel) wxLogMessage(_T("BuildRAZFromSENCFile Getting new UserKey"));
+ 
+             // Give user one chance to fix the key, then bail out..
+-            if(!validateUserKey( FullPath )){
++            if(!validateUserKey( job.fullPath )){
+                 if(g_debugLevel) wxLogMessage(_T("BuildRAZFromSENCFile Bad UserKey, return ERROR_SIGNATURE_FAILURE"));
++                delete sencfile;
++                job.ingestResult = ERROR_SIGNATURE_FAILURE;
+                 return ERROR_SIGNATURE_FAILURE;
+             }
+             else{
+                 if(g_debugLevel) wxLogMessage(_T("BuildRAZFromSENCFile Retry ingest200"));
+                 delete sencfile;
+-                Objects.clear();
++                job.objects.clear();
+                 VEs.clear();
+                 VCs.clear();
+                 sencfile = new Osenc();
+                 sencfile->setRegistrarMgr( pi_poRegistrarMgr );
+                 sencfile->setKey(g_UserKey);            // the new key
+ 
+-                int srvb = sencfile->ingest200(FullPath, &Objects, &VEs, &VCs);
++                int srvb = sencfile->ingest200(job.fullPath, &job.objects, &VEs, &VCs);
+                 if(srvb != SENC_NO_ERROR){
+                     if(g_debugLevel) wxLogMessage(_T("BuildRAZFromSENCFile ingest Error, second try"));
+-                    wxLogMessage( sencfile->getLastError() );
++                    if(g_debugLevel) wxLogMessage( sencfile->getLastError() );
+                     delete sencfile;
++                    job.ingestResult = srvb;
+                     return srvb;
+                 }
+             }
+         }
+         else if( ERROR_SENC_EXPIRED == srv ){
+             if(g_debugLevel) wxLogMessage(_T("BuildRAZFromSENCFile ingest Error, expired chart"));
+-            wxLogMessage( sencfile->getLastError() );
++            if(g_debugLevel) wxLogMessage( sencfile->getLastError() );
+ 
+-            m_uSENCExpireDaysRemaining = sencfile->m_expireDaysRemaining;
+-            m_uSENCGraceDaysAllowed = sencfile->m_graceDaysAllowed;
+-            m_uSENCGraceDaysRemaining = sencfile->m_graceDaysRemining;
++            // Stage expiry counts in the job; FinishAsyncLoad shows the dialog (GUI).
++            job.expireDaysRemaining = sencfile->m_expireDaysRemaining;
++            job.graceDaysAllowed    = sencfile->m_graceDaysAllowed;
++            job.graceDaysRemaining  = sencfile->m_graceDaysRemining;
+ 
+             delete sencfile;
++            job.ingestResult = srv;
+             return srv;
+ 
+         }
+@@ -4621,33 +4685,39 @@ int eSENCChart::BuildRAZFromSENCFile( const wxString& FullPath, wxString& Key, i
+     }
+ 
+     //  If the cell is "Cancelled", return error, so that cell does not display
+-    if (sencfile->getSENCReadBaseEdition().StartsWith("0") )
+-      return PI_INIT_FAIL_REMOVE;
++    if (sencfile->getSENCReadBaseEdition().StartsWith("0") ){
++        delete sencfile;
++        job.ingestResult = PI_INIT_FAIL_REMOVE;
++        return PI_INIT_FAIL_REMOVE;
++    }
+ 
+-    // For uSENC charts, capture the expiration info
+-    if(ctype == CTYPE_OESU){
+-        m_uSENCExpireDaysRemaining = sencfile->m_expireDaysRemaining;
+-        m_uSENCGraceDaysAllowed = sencfile->m_graceDaysAllowed;
+-        m_uSENCGraceDaysRemaining = sencfile->m_graceDaysRemining;
++    // All GUI-visible metadata is STAGED IN THE JOB here (worker thread), and
++    // copied to chart members on the GUI thread by BuildRAZ_MainPhase. The worker
++    // therefore writes no member the GUI thread can read -> no data race, and no
++    // synchronous header round-trip is needed in PostInit.
++    if(job.ctype == CTYPE_OESU){
++        job.expireDaysRemaining = sencfile->m_expireDaysRemaining;
++        job.graceDaysAllowed    = sencfile->m_graceDaysAllowed;
++        job.graceDaysRemaining  = sencfile->m_graceDaysRemining;
+     }
+ 
+     if(g_debugLevel) wxLogMessage(_T("BuildRAZFromSENCFile SENC Loaded OK"));
+ 
+-    //  Get the cell Ref point
++    //  Cell Ref point. Used locally for the worker's bbox math AND staged in the job.
+     Extent ext = sencfile->getReadExtent();
++    double refLat = (ext.NLAT + ext.SLAT) / 2.;
++    double refLon = (ext.ELON + ext.WLON) / 2.;
+ 
+-    m_FullExtent.ELON = ext.ELON;
+-    m_FullExtent.WLON = ext.WLON;
+-    m_FullExtent.NLAT = ext.NLAT;
+-    m_FullExtent.SLAT = ext.SLAT;
+-    m_bExtentSet = true;
+-
+-    m_ref_lat = (ext.NLAT + ext.SLAT) / 2.;
+-    m_ref_lon = (ext.ELON + ext.WLON) / 2.;
+-
++    job.extELON = ext.ELON;
++    job.extWLON = ext.WLON;
++    job.extNLAT = ext.NLAT;
++    job.extSLAT = ext.SLAT;
++    job.extentValid = true;
++    job.refLat = refLat;
++    job.refLon = refLon;
+ 
+-    //  Record the SENC file version just read
+-    m_sencReadVersion = sencfile->getReadVersion();
++    //  Record the SENC file version just read (consumed by BuildRAZ_MainPhase)
++    job.sencReadVersion = sencfile->getReadVersion();
+ 
+     //  Process the Edge feature arrays.
+ 
+@@ -4701,8 +4771,8 @@ int eSENCChart::BuildRAZFromSENCFile( const wxString& FullPath, wxString& Key, i
+             }
+ #endif
+             double lat1, lon1, lat2, lon2;
+-            fromSM_Plugin( east_min, north_min, m_ref_lat, m_ref_lon, &lat1, &lon1 );
+-            fromSM_Plugin( east_max, north_max, m_ref_lat, m_ref_lon, &lat2, &lon2 );
++            fromSM_Plugin( east_min, north_min, refLat, refLon, &lat1, &lon1 );
++            fromSM_Plugin( east_max, north_max, refLat, refLon, &lat2, &lon2 );
+             vep->edgeBBox.Set(lat1, lon1, lat2, lon2);
+         }
+ 
+@@ -4732,11 +4802,90 @@ int eSENCChart::BuildRAZFromSENCFile( const wxString& FullPath, wxString& Key, i
+     VEs.clear();        // destroy contents, no longer needed
+     VCs.clear();
+ 
++    //   GUI-visible base-class metadata, STAGED IN THE JOB (worker thread).
++    //   BuildRAZ_MainPhase copies these to chart members on the GUI thread.
++
++    //   Decide on pub date to show
++    wxDateTime d000;
++    d000.ParseFormat( sencfile->getBaseDate(), _T("%Y%m%d") );
++    if( !d000.IsValid() )
++        d000.ParseFormat( _T("20000101"), _T("%Y%m%d") );
++
++    wxDateTime updt;
++    updt.ParseFormat( sencfile->getUpdateDate(), _T("%Y%m%d") );
++    if( !updt.IsValid() )
++        updt.ParseFormat( _T("20000101"), _T("%Y%m%d") );
++
++    if(updt.IsLaterThan(d000))
++        job.pubYear.Printf(_T("%4d"), updt.GetYear());
++    else
++        job.pubYear.Printf(_T("%4d"), d000.GetYear());
++
++    //    Set some base class values
++    job.chartScale = sencfile->getSENCReadScale();
++
++    wxDateTime upd = updt;
++    if( !upd.IsValid() )
++        upd.ParseFormat( _T("20000101"), _T("%Y%m%d") );
++    upd.ResetTime();
++    job.edDate = upd;
++
++    job.se = sencfile->getSENCReadBaseEdition();
++    wxString supdate;
++    supdate.Printf(_T(" / %d"), sencfile->getSENCReadLastUpdate());
++    job.se += supdate;
++
++    job.datumStr       = _T("WGS84");
++    job.soundingsDatum = sencfile->getSoundingsDatumString();
++    job.readID         = sencfile->getReadID();
++    job.readName       = sencfile->getReadName();
++    job.depthUnits     = _T("Meters");
++
++    //  TXTDSC info-file records are not in the header, so always stage them in the
++    //  job (job-local; the GUI thread copies to m_TXTDSC_map in BuildRAZ_MainPhase).
++    job.txtdscMap = sencfile->GetTXTDSC_Map();
++
++    delete sencfile;                 // all metadata extracted; Osenc no longer needed
++    job.ingestResult = SENC_NO_ERROR;
++    return SENC_NO_ERROR;
++}
++
++// GUI-THREAD ONLY phase: ps52plib LUP walk -> razRules, hashmap validation,
++// AssembleLineGeometry, and chart_context wiring. Consumes job.objects.
++int eSENCChart::BuildRAZ_MainPhase( ChartLoadJob& job )
++{
++    int ret_val = 0;                    // default is OK
++
++    //  Copy all worker-staged metadata to chart members on the GUI thread (no race).
++    if(job.extentValid){
++        m_FullExtent.NLAT = job.extNLAT;
++        m_FullExtent.SLAT = job.extSLAT;
++        m_FullExtent.ELON = job.extELON;
++        m_FullExtent.WLON = job.extWLON;
++        m_bExtentSet = true;
++    }
++    m_ref_lat          = job.refLat;
++    m_ref_lon          = job.refLon;
++    m_Chart_Scale      = job.chartScale;
++    m_sencReadVersion  = job.sencReadVersion;
++    m_PubYear          = job.pubYear;
++    m_EdDate           = job.edDate;
++    m_SE               = job.se;
++    m_datum_str        = job.datumStr;
++    m_SoundingsDatum   = job.soundingsDatum;
++    m_ID               = job.readID;
++    m_Name             = job.readName;
++    m_DepthUnits       = job.depthUnits;
++    m_TXTDSC_map       = job.txtdscMap;
++    m_uSENCExpireDaysRemaining = job.expireDaysRemaining;
++    m_uSENCGraceDaysAllowed    = job.graceDaysAllowed;
++    m_uSENCGraceDaysRemaining  = job.graceDaysRemaining;
++
+     //Walk the vector of S57Objs, associating LUPS, instructions, etc...
+ 
+-    for(unsigned int i=0 ; i < Objects.size() ; i++){
++    for(unsigned int i=0 ; i < job.objects.size() ; i++){
+ 
+-        S57Obj *obj = Objects[i];
++        S57Obj *obj = job.objects[i];
+ 
+         //      This is where Simplified or Paper-Type point features are selected
+         LUPrec *LUP;
+@@ -4776,7 +4925,7 @@ int eSENCChart::BuildRAZFromSENCFile( const wxString& FullPath, wxString& Key, i
+ //                 LogMessageOnce( msg );
+ //             }
+             delete obj;
+-            Objects[i] = NULL;
++            job.objects[i] = NULL;
+             // nothing to do with this unknown object
+             continue;
+         } else {
+@@ -4834,55 +4983,6 @@ int eSENCChart::BuildRAZFromSENCFile( const wxString& FullPath, wxString& Key, i
+ 
+     if(g_debugLevel) wxLogMessage(_T("BuildRAZFromSENCFile:  Object tree Walk OK"));
+ 
+-    //   Decide on pub date to show
+-
+-    wxDateTime d000;
+-    d000.ParseFormat( sencfile->getBaseDate(), _T("%Y%m%d") );
+-    if( !d000.IsValid() )
+-        d000.ParseFormat( _T("20000101"), _T("%Y%m%d") );
+-
+-    wxDateTime updt;
+-    updt.ParseFormat( sencfile->getUpdateDate(), _T("%Y%m%d") );
+-    if( !updt.IsValid() )
+-        updt.ParseFormat( _T("20000101"), _T("%Y%m%d") );
+-
+-    if(updt.IsLaterThan(d000))
+-        m_PubYear.Printf(_T("%4d"), updt.GetYear());
+-    else
+-        m_PubYear.Printf(_T("%4d"), d000.GetYear());
+-
+-
+-
+-    //    Set some base class values
+-        // Scale
+-        m_Chart_Scale = sencfile->getSENCReadScale();
+-
+-
+-
+-        wxDateTime upd = updt;
+-        if( !upd.IsValid() )
+-            upd.ParseFormat( _T("20000101"), _T("%Y%m%d") );
+-
+-        upd.ResetTime();
+-        m_EdDate = upd;
+-
+-        m_SE = sencfile->getSENCReadBaseEdition();
+-
+-        wxString supdate;
+-        supdate.Printf(_T(" / %d"), sencfile->getSENCReadLastUpdate());
+-        m_SE += supdate;
+-
+-
+-        m_datum_str = _T("WGS84");
+-
+-        m_SoundingsDatum = sencfile->getSoundingsDatumString();
+-        m_ID = sencfile->getReadID();
+-        m_Name = sencfile->getReadName();
+-        m_DepthUnits = _T("Meters"); //senc.getSoundingsDatumString();
+-
+-        //  Get the hashmap containing any TXTDSC info file records
+-        m_TXTDSC_map = sencfile->GetTXTDSC_Map();
+-
+         if(m_sencReadVersion == 200){
+             // Validate hash maps....
+             //TODO  Do we really need to do this?
+@@ -5002,8 +5102,48 @@ int eSENCChart::BuildRAZFromSENCFile( const wxString& FullPath, wxString& Key, i
+ 
+         if(g_debugLevel) wxLogMessage(_T("BuildRAZFromSENCFile Return OK"));
+ 
+-        delete sencfile;
+-        return ret_val;
++        return ret_val;     // (Osenc was freed at the end of BuildRAZ_WorkerPhase)
++}
++
++// GUI-thread completion of an async load (called from the load manager's
++// CallAfter trampoline after the worker phase finished for a still-live chart).
++void eSENCChart::FinishAsyncLoad( ChartLoadJob& job )
++{
++    if(job.ingestResult == ERROR_SENC_EXPIRED){
++        // Hard expiry: surface the dialog now that the worker has the day counts,
++        // and render blank. Stay "ready" so core does not delete-and-reopen us.
++        m_uSENCExpireDaysRemaining = job.expireDaysRemaining;
++        m_uSENCGraceDaysAllowed    = job.graceDaysAllowed;
++        m_uSENCGraceDaysRemaining  = job.graceDaysRemaining;
++        ShowExpiredErrorMessage(m_FullPath, m_uSENCExpireDaysRemaining,
++                                m_uSENCGraceDaysRemaining, m_uSENCGraceDaysAllowed);
++        m_bLoadFailedPermanent = true;
++        m_bDataReady           = false;
++        m_bReadyToRender       = true;
++        return;
++    }
++
++    if(job.ingestResult != SENC_NO_ERROR){
++        // Other failure (signature / corrupt / cancelled cell): render blank, stay
++        // ready so core does not delete-and-reopen and busy-loop on the decode.
++        m_bLoadFailedPermanent = true;
++        m_bDataReady           = false;
++        m_bReadyToRender       = true;
++        return;
++    }
++
++    BuildRAZ_MainPhase( job );        // copies metadata + ps52plib LUP walk + assembly
++    SetColorScheme( job.colorScheme, false );
++    BuildDepthContourArray();
++
++    // Soft "expires soon" warning, now that expiry counts are populated.
++    ShowExpiredErrorMessage(m_FullPath, m_uSENCExpireDaysRemaining,
++                            m_uSENCGraceDaysRemaining, m_uSENCGraceDaysAllowed);
++
++    m_bDataReady     = true;
++    m_bReadyToRender = true;
++
++    RequestRefresh( GetOCPNCanvasWindow() );
+ }
+ 
+ 
+@@ -5561,6 +5701,7 @@ PI_InitReturn eSENCChart::PostInit( int flags, int cs )
+ 
+ //    Build array of contour values for later use by conditional symbology
+     BuildDepthContourArray();
++    m_bDataReady = true;            // synchronous path: RAZ is fully built here
+     m_bReadyToRender = true;
+ 
+     return PI_INIT_OK;
+@@ -5978,6 +6119,8 @@ ViewPort CreateCompatibleViewport( const PlugIn_ViewPort &pivp)
+ bool eSENCChart::DoRenderRegionViewOnDC( wxMemoryDC& dc, const PlugIn_ViewPort& VPoint,
+                                        const wxRegion &Region, bool b_overlay )
+ {
++    if(!m_bDataReady)               // async loader gate (before any UpdateLUPs/razRules access)
++        return false;
+ 
+     SetVPParms( VPoint );
+ 
+@@ -6122,6 +6265,8 @@ return m_pCloneBM;
+ 
+ bool eSENCChart::RenderViewOnDC( wxMemoryDC& dc, const PlugIn_ViewPort& VPoint )
+ {
++    if(!m_bDataReady)               // async loader gate (before any UpdateLUPs/razRules access)
++        return false;
+ 
+     m_cvp = CreateCompatibleViewport( VPoint );
+ 
+@@ -6152,6 +6297,9 @@ bool eSENCChart::RenderViewOnDC( wxMemoryDC& dc, const PlugIn_ViewPort& VPoint )
+ 
+ bool eSENCChart::DoRenderViewOnDC( wxMemoryDC& dc, const PlugIn_ViewPort& VPoint, bool force_new_view )
+ {
++    if(!m_bDataReady)               // async loader gate (before any razRules / pDIB access)
++        return false;
++
+     bool bnewview = false;
+     wxPoint rul, rlr;
+     bool bNewVP = false;
+diff --git a/src/eSENCChart.h b/src/eSENCChart.h
+index f05a7da..9c07d61 100644
+--- a/src/eSENCChart.h
++++ b/src/eSENCChart.h
+@@ -33,6 +33,8 @@ class Extended_Geometry;
+ #include "viewport.h"
+ #include "Osenc.h"
+ #include <vector>
++#include <atomic>
++#include <memory>
+ 
+ //WX_DECLARE_HASH_MAP( unsigned int, VE_Element *, wxIntegerHash, wxIntegerEqual, VE_Hash );
+ //WX_DECLARE_HASH_MAP( unsigned int, VC_Element *, wxIntegerHash, wxIntegerEqual, VC_Hash );
+@@ -66,6 +68,61 @@ enum
+     BUILD_SENC_NOK_PERMANENT
+ };
+ 
++class eSENCChart;
++
++// Shared lifetime token for an async chart load. Captured by value (shared_ptr)
++// by the worker and the completion callback, so it outlives the eSENCChart even
++// if the chart is evicted/deleted mid-load. `chart` is a raw back-pointer that is
++// only ever dereferenced on the GUI thread (set at construction, nulled by
++// ~eSENCChart). The manager additionally blocks ~eSENCChart until the worker is
++// no longer inside this chart's worker phase (see eSENCChartLoadManager).
++struct JobState {
++    std::atomic<bool>          cancelled;
++    std::atomic<eSENCChart*>   chart;   // nulled by ~eSENCChart; read by worker/trampoline
++    JobState(eSENCChart* c) : cancelled(false), chart(c) {}
++};
++
++// ---------------------------------------------------------------------------
++// Async chart loader: transfer object carrying decrypt/parse results from the
++// background worker phase to the GUI-thread main phase. The job is the sole
++// worker->main hand-off; see eSENCChart::BuildRAZ_WorkerPhase / BuildRAZ_MainPhase.
++// ---------------------------------------------------------------------------
++struct ChartLoadJob {
++    // inputs (captured on the GUI thread at enqueue time)
++    wxString        fullPath;
++    wxString        key;
++    int             ctype;
++    int             colorScheme;
++
++    // worker-phase output, consumed by the main phase
++    S57ObjVector    objects;          // S57 objects produced by ingest200
++    int             ingestResult;     // SENC_NO_ERROR or an error code
++    wxStringHashMap  txtdscMap;       // TXTDSC info-file records (not in the header)
++
++    // GUI-visible metadata: staged by the worker (off-thread), copied to chart
++    // members on the GUI thread by BuildRAZ_MainPhase. Carried in the job instead
++    // of written to members so the worker touches nothing the GUI thread can read
++    // (no data race) and PostInit needs no synchronous daemon round-trip.
++    double          extNLAT, extSLAT, extELON, extWLON;
++    bool            extentValid;
++    double          refLat, refLon;
++    int             chartScale;
++    int             sencReadVersion;
++    wxString        pubYear;
++    wxDateTime      edDate;
++    wxString        se;
++    wxString        datumStr, soundingsDatum, depthUnits, readID, readName;
++    int             expireDaysRemaining, graceDaysAllowed, graceDaysRemaining;
++
++    std::shared_ptr<JobState> state;  // lifetime/cancellation token
++
++    ChartLoadJob()
++        : ctype(0), colorScheme(0), ingestResult(0),
++          extNLAT(0), extSLAT(0), extELON(0), extWLON(0), extentValid(false),
++          refLat(0), refLon(0), chartScale(1), sencReadVersion(0),
++          expireDaysRemaining(-1), graceDaysAllowed(0), graceDaysRemaining(-1) {}
++};
++
+ // typedef struct  {
+ //     double x;
+ //     double y;
+@@ -132,6 +189,7 @@ class  eSENCChart : public PlugInChartBaseExtendedPlus2
+ class  eSENCChart : public PlugInChartBaseExtended
+ #endif
+ {
++    friend class eSENCChartLoadManager;   // async loader calls the protected BuildRAZ_* / FinishAsyncLoad
+ 
+     public:
+       //    Public methods
+@@ -264,6 +322,14 @@ protected:
+       PI_InitReturn     FindOrCreateSenc( const wxString& name );
+       int               BuildSENCFile( const wxString& FullPath_os63, const wxString& SENCFileName );
+       int               BuildRAZFromSENCFile( const wxString& FullPath, wxString &Key, int ctype );
++      // Async loader split of BuildRAZFromSENCFile (see ChartLoadJob):
++      //   WorkerPhase = decrypt + parse + metadata (worker-thread safe, no ps52plib/GL).
++      //                 bAllowGui=false on the worker thread suppresses error dialogs.
++      //   MainPhase   = ps52plib LUP walk + AssembleLineGeometry + chart_context (GUI thread only)
++      int               BuildRAZ_WorkerPhase( ChartLoadJob& job, bool bAllowGui = true );
++      int               BuildRAZ_MainPhase( ChartLoadJob& job );
++      // GUI-thread completion: runs MainPhase, finalizes, flips m_bDataReady, refreshes.
++      void              FinishAsyncLoad( ChartLoadJob& job );
+ //      int               _insertRules(S57Obj *obj);
+       int               _insertRules( S57Obj *obj, LUPrec *LUP, eSENCChart *pOwner );
+ 
+@@ -347,6 +413,14 @@ protected:
+       ExtentPI          m_FullExtent;
+       bool              m_bExtentSet;
+ 
++      //  Async loader: render gate, distinct from base-class m_bReadyToRender.
++      //  m_bReadyToRender stays true so core never delete-and-reopens the chart;
++      //  m_bDataReady gates the plugin's own render virtuals until the background
++      //  decrypt + RAZ build (BuildRAZ_MainPhase) has completed on the GUI thread.
++      bool              m_bDataReady;
++      bool              m_bLoadFailedPermanent;     // worker phase failed; render blank, no retry storm
++      std::shared_ptr<JobState> m_loadState;        // in-flight async load token (null if synchronous/idle)
++
+       wxFileName        m_SENCFileName;
+       wxString          m_senc_dir;
+ 
+diff --git a/src/eSENCChartLoadManager.cpp b/src/eSENCChartLoadManager.cpp
+new file mode 100644
+index 0000000..dd94800
+--- /dev/null
++++ b/src/eSENCChartLoadManager.cpp
+@@ -0,0 +1,123 @@
++/******************************************************************************
++ * Async o-chart load manager implementation. See eSENCChartLoadManager.h.
++ ******************************************************************************/
++
++#include "wx/wxprec.h"
++#ifndef WX_PRECOMP
++  #include "wx/wx.h"
++#endif
++#include <wx/app.h>
++
++#include "eSENCChartLoadManager.h"
++
++eSENCChartLoadManager* g_chartLoadManager = NULL;
++
++// Runs on the GUI thread (via CallAfter). Completes the load for a still-live chart.
++void eSENCChartLoadManager::MainPhaseTrampoline(std::shared_ptr<ChartLoadJob> job)
++{
++    if(job->state->cancelled.load())
++        return;                                   // chart was deleted; no-op
++    eSENCChart* chart = job->state->chart.load(); // GUI-thread read
++    if(!chart)
++        return;
++    chart->FinishAsyncLoad(*job);
++}
++
++eSENCChartLoadManager::eSENCChartLoadManager()
++    : m_shutdown(false), m_started(false)
++{
++}
++
++eSENCChartLoadManager::~eSENCChartLoadManager()
++{
++    Stop();
++}
++
++void eSENCChartLoadManager::Start()
++{
++    if(m_started)
++        return;
++    m_shutdown = false;
++    m_started  = true;
++    m_worker   = std::thread(&eSENCChartLoadManager::WorkerLoop, this);
++}
++
++void eSENCChartLoadManager::Stop()
++{
++    if(!m_started)
++        return;
++    {
++        std::lock_guard<std::mutex> lk(m_mtx);
++        m_shutdown = true;
++    }
++    m_cv.notify_all();
++    if(m_worker.joinable())
++        m_worker.join();
++    m_started = false;
++}
++
++void eSENCChartLoadManager::Enqueue(std::shared_ptr<ChartLoadJob> job)
++{
++    {
++        std::lock_guard<std::mutex> lk(m_mtx);
++        m_queue.push_back(job);
++    }
++    m_cv.notify_one();
++}
++
++void eSENCChartLoadManager::CancelAndWait(const std::shared_ptr<JobState>& st)
++{
++    std::unique_lock<std::mutex> lk(m_mtx);
++    st->cancelled.store(true);
++
++    // Drop it if still queued (not yet picked up by the worker).
++    for(auto it = m_queue.begin(); it != m_queue.end(); ){
++        if((*it)->state == st)
++            it = m_queue.erase(it);
++        else
++            ++it;
++    }
++
++    // If the worker is currently inside this job's worker phase (writing chart
++    // members), wait until it finishes before the caller frees those members.
++    while(m_activeState == st)
++        m_doneCv.wait(lk);
++}
++
++void eSENCChartLoadManager::WorkerLoop()
++{
++    for(;;){
++        std::shared_ptr<ChartLoadJob> job;
++        {
++            std::unique_lock<std::mutex> lk(m_mtx);
++            m_cv.wait(lk, [this]{ return m_shutdown || !m_queue.empty(); });
++            if(m_shutdown && m_queue.empty())
++                return;
++            if(m_queue.empty())
++                continue;
++            job = m_queue.front();
++            m_queue.pop_front();
++            if(job->state->cancelled.load())
++                continue;                    // cancelled while queued
++            m_activeState = job->state;      // mark active under the lock
++        }
++
++        // Blocking decrypt + parse, off the GUI thread. Writes only this chart's
++        // members; safe because CancelAndWait blocks ~eSENCChart until we clear
++        // m_activeState below, so the chart cannot be freed under us.
++        eSENCChart* chart = job->state->chart.load();
++        if(chart && !job->state->cancelled.load())
++            chart->BuildRAZ_WorkerPhase(*job, false /* no GUI on worker thread */);
++
++        {
++            std::lock_guard<std::mutex> lk(m_mtx);
++            m_activeState.reset();           // worker phase done for this job
++        }
++        m_doneCv.notify_all();               // wake any waiting destructor
++
++        if(job->state->cancelled.load())
++            continue;                        // chart died during decrypt; discard
++
++        wxTheApp->CallAfter([job]{ eSENCChartLoadManager::MainPhaseTrampoline(job); });
++    }
++}
+diff --git a/src/eSENCChartLoadManager.h b/src/eSENCChartLoadManager.h
+new file mode 100644
+index 0000000..b597928
+--- /dev/null
++++ b/src/eSENCChartLoadManager.h
+@@ -0,0 +1,58 @@
++/******************************************************************************
++ * Async o-chart load manager.
++ *
++ * Runs the blocking oexserverd decrypt + SENC parse (eSENCChart::BuildRAZ_WorkerPhase)
++ * on a single background worker thread, then marshals the GUI-thread finalize
++ * (BuildRAZ_MainPhase + refresh) back via wxApp::CallAfter. One worker by design:
++ * it serializes oexserverd access and the shared pi_poRegistrarMgr, and sidesteps
++ * the (unverified) question of whether the daemon serves concurrent requests.
++ ******************************************************************************/
++
++#ifndef _ESENCCHARTLOADMANAGER_H_
++#define _ESENCCHARTLOADMANAGER_H_
++
++#include <thread>
++#include <mutex>
++#include <condition_variable>
++#include <deque>
++#include <memory>
++#include <atomic>
++
++#include "eSENCChart.h"     // ChartLoadJob, JobState, eSENCChart
++
++class eSENCChartLoadManager {
++public:
++    eSENCChartLoadManager();
++    ~eSENCChartLoadManager();
++
++    void Start();
++    void Stop();
++
++    // GUI thread: enqueue an async load. Returns immediately.
++    void Enqueue(std::shared_ptr<ChartLoadJob> job);
++
++    // GUI thread (from ~eSENCChart): cancel this load. Drops it if still queued,
++    // and blocks until the worker is no longer inside this job's worker phase, so
++    // the caller may then safely free the chart's members.
++    void CancelAndWait(const std::shared_ptr<JobState>& st);
++
++    // GUI-thread completion (posted via CallAfter). Static so it needs no manager
++    // instance and is safe to fire after the manager is torn down.
++    static void MainPhaseTrampoline(std::shared_ptr<ChartLoadJob> job);
++
++private:
++    void WorkerLoop();
++
++    std::thread               m_worker;
++    std::mutex                m_mtx;
++    std::condition_variable   m_cv;       // queue-not-empty / shutdown
++    std::condition_variable   m_doneCv;   // worker finished a job's worker phase
++    std::deque<std::shared_ptr<ChartLoadJob>> m_queue;
++    std::shared_ptr<JobState> m_activeState;   // job currently in its worker phase (else null)
++    std::atomic<bool>         m_shutdown;
++    bool                      m_started;        // GUI-thread only (Init/DeInit serialized)
++};
++
++extern eSENCChartLoadManager* g_chartLoadManager;
++
++#endif  // _ESENCCHARTLOADMANAGER_H_
+diff --git a/src/o-charts_pi.cpp b/src/o-charts_pi.cpp
+index b47c9c8..a1f5bc5 100644
+--- a/src/o-charts_pi.cpp
++++ b/src/o-charts_pi.cpp
+@@ -49,6 +49,7 @@
+ #include "config.h"
+ #include "o-charts_pi.h"
+ #include "eSENCChart.h"
++#include "eSENCChartLoadManager.h"
+ #include "../libs/iso8211/src/iso8211.h"
+ #include "dsa_utils.h"
+ #include "s57RegistrarMgr.h"
+@@ -773,6 +774,12 @@ int o_charts_pi::Init(void)
+ 
+     m_ochartsAPI = new DpOchartsAPI();
+ 
++    // Start the background o-chart load manager (async decrypt off the GUI thread).
++    if(!g_chartLoadManager){
++        g_chartLoadManager = new eSENCChartLoadManager();
++        g_chartLoadManager->Start();
++    }
++
+     return flags;
+ 
+ }
+@@ -792,8 +799,17 @@ bool o_charts_pi::DeInit(void)
+ 
+     m_class_name_array.Clear();
+ 
++    // Shut the SENC server down FIRST: a worker parked in the blocking FIFO read
++    // then gets EOF and returns, so the subsequent Stop()/join() cannot hang on a
++    // wedged daemon (the one call that EOFs the pipe must precede the join).
+     shutdown_SENC_server();
+ 
++    if(g_chartLoadManager){
++        g_chartLoadManager->Stop();          // joins the worker (no new CallAfters after)
++        delete g_chartLoadManager;
++        g_chartLoadManager = NULL;
++    }
++
+     if (m_ochartsAPI)
+     {
+         delete m_ochartsAPI;
+-- 
+2.39.5
+

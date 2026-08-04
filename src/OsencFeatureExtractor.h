@@ -14,19 +14,43 @@
 #define OSENC_FEATURE_EXTRACTOR_H
 
 #include <functional>
+#include <wx/arrstr.h>
 #include <wx/string.h>
 
+// Resumable by design. Decryption must happen on the thread that owns the plugin's globals —
+// the key hashes in uKey.cpp are swapped by the chart RENDER path with no lock, and
+// validate_SENC_server() calls wxExecute — so this cannot simply be moved to a worker. Instead
+// the caller drives it a few cells at a time from its own event loop, which keeps the display
+// alive, makes the read abandonable, and leaves every one of those globals single-threaded.
 class OsencFeatureExtractor {
 public:
-    // Extracts every .oesu cell under chartSetDir into a single bundle file.
-    // onProgress(done, total) is called per cell so a long extraction can show progress.
-    // Returns false and sets GetLastError() on failure; a partial bundle is removed.
+    OsencFeatureExtractor();
+    ~OsencFeatureExtractor();
+
+    // One-shot form: Begin/Step/Finish driven to completion internally. onProgress(done, total)
+    // is called per cell. Blocks until the whole chart set is read.
     bool Extract(const wxString& chartSetDir, const wxString& bundlePath,
                  std::function<void(int done, int total)> onProgress);
+
+    // Chunked form. Begin() enumerates the cells and opens the bundle; Step() advances by at
+    // most maxCells and returns true while work remains; Finish() completes the bundle.
+    // Destroying the object mid-read abandons it and removes the partial bundle.
+    bool Begin(const wxString& chartSetDir, const wxString& bundlePath);
+    bool Step(int maxCells);
+    bool Finish();
+
+    int Done() const;
+    int Total() const;      // two passes over the cells: index, then features
 
     wxString GetLastError() const { return m_lastError; }
 
 private:
+    void RunHeaderChunk(int from, int to);
+    void RunFeatureChunk(int from, int to);
+    void Cleanup(bool removeBundle);
+
+    struct State;           // cells, bundle handle, writer, counters — all in the .cpp
+    State* m_state = nullptr;
     wxString m_lastError;
 };
 
